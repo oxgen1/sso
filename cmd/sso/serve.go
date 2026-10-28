@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -23,8 +24,9 @@ func serve(args []string) error {
 	return serveUntil(ctx, args, os.Stderr)
 }
 
-// serveUntil runs the IdP until ctx is done. Logs are JSON for journald:
-// audit records have "log":"audit", the rest "log":"diag".
+// serveUntil runs the IdP until ctx is done. The CA key is ca.key in
+// $CREDENTIALS_DIRECTORY, where systemd's LoadCredential puts it. Logs are
+// JSON for journald: audit records have "log":"audit", the rest "log":"diag".
 func serveUntil(ctx context.Context, args []string, logOut io.Writer) error {
 	if len(args) != 1 {
 		return errors.New("serve: need one FILE")
@@ -33,8 +35,16 @@ func serveUntil(ctx context.Context, args []string, logOut io.Writer) error {
 	if err != nil {
 		return err
 	}
+	creds := os.Getenv("CREDENTIALS_DIRECTORY")
+	if creds == "" {
+		return errors.New("serve: CREDENTIALS_DIRECTORY isn't set; it holds ca.key")
+	}
+	ca, err := cfg.LoadCA(filepath.Join(creds, "ca.key"))
+	if err != nil {
+		return err
+	}
 	log := slog.New(slog.NewJSONHandler(logOut, nil))
-	h, err := idp.New(cfg, log, time.Now)
+	h, err := idp.New(cfg, ca, log, time.Now)
 	if err != nil {
 		return err
 	}

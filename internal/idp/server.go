@@ -1,6 +1,5 @@
-// Package idp serves the IdP's pages and endpoints. So far that's passkey
-// sign-in and the SSO session; the device flow, certificate issuance and
-// approvals build on the session.
+// Package idp serves the IdP's pages and endpoints: passkey sign-in, the SSO
+// session, and the device flow that issues certificates.
 package idp
 
 import (
@@ -16,12 +15,14 @@ import (
 	"net/http"
 	"net/netip"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/oxgen1/sso/internal/config"
 	"github.com/oxgen1/sso/internal/ratelimit"
 	"github.com/oxgen1/sso/internal/store"
 	"github.com/oxgen1/sso/lib/assertion"
+	"github.com/oxgen1/sso/lib/cert"
 )
 
 // Limits on what's held in memory, and for how long.
@@ -37,10 +38,10 @@ const (
 	webauthnTimeout = 2 * time.Minute
 	maxChallenges   = 1000
 
-	// Starting a sign-in holds a challenge in memory: 10 at once per
-	// address, then one every 6 s.
-	beginEvery = 6 * time.Second
-	beginBurst = 10
+	// Starting a sign-in or a device request holds something in memory:
+	// 10 at once per address, then one every 6 s.
+	addrEvery  = 6 * time.Second
+	addrBurst  = 10
 	maxClients = 10_000
 
 	maxBody = 16 << 10
@@ -68,29 +69,36 @@ type Session struct {
 // Server is the IdP's HTTP handler.
 type Server struct {
 	cfg        *config.Config
+	ca         *cert.CA
 	verifier   *assertion.Verifier
-	challenges *store.Store[[]byte]
+	challenges *store.Store[challenge]
 	sessions   *store.Store[Session]
-	beginLimit *ratelimit.Limiter
+	devices    *store.Store[*deviceAuth]
+	deviceMu   sync.Mutex // the mutable fields of every deviceAuth
+	addrLimit  *ratelimit.Limiter
+	lookLimit  *ratelimit.Limiter
 	log        *slog.Logger
 	now        func() time.Time
 	mux        *http.ServeMux
 }
 
-// New returns the IdP for cfg. Audit and diagnostic records go to log, told
+// New returns the IdP for cfg, issuing certificates from ca. Audit and diagnostic records go to log, told
 // apart by their "log" attribute; now is the clock for everything but
 // latency.
-func New(cfg *config.Config, log *slog.Logger, now func() time.Time) (*Server, error) {
+func New(cfg *config.Config, ca *cert.CA, log *slog.Logger, now func() time.Time) (*Server, error) {
 	v, err := assertion.NewVerifier(cfg.RPID, cfg.Origin)
 	if err != nil {
 		return nil, err
 	}
 	s := &Server{
 		cfg:        cfg,
+		ca:         ca,
 		verifier:   v,
-		challenges: store.New[[]byte](maxChallenges, challengeTTL, now),
+		challenges: store.New[challenge](maxChallenges, challengeTTL, now),
 		sessions:   store.New[Session](maxSessions, sessionTTL, now),
-		beginLimit: ratelimit.New(beginEvery, beginBurst, maxClients, now),
+		devices:    store.New[*deviceAuth](maxDevices, deviceTTL, now),
+		addrLimit:  ratelimit.New(addrEvery, addrBurst, maxClients, now),
+		lookLimit:  ratelimit.New(lookupEvery, lookupBurst, maxClients, now),
 		log:        log,
 		now:        now,
 		mux:        http.NewServeMux(),
@@ -100,7 +108,13 @@ func New(cfg *config.Config, log *slog.Logger, now func() time.Time) (*Server, e
 	s.mux.HandleFunc("POST /signin/begin", s.begin)
 	s.mux.HandleFunc("POST /signin/finish", s.finish)
 	s.mux.HandleFunc("POST /signout", s.signout)
-	for _, name := range []string{"signin.js", "style.css"} {
+	s.mux.HandleFunc("POST /device/code", s.deviceCode)
+	s.mux.HandleFunc("POST /device/token", s.token)
+	s.mux.HandleFunc("GET /device", s.devicePage)
+	s.mux.HandleFunc("POST /device/begin", s.deviceBegin)
+	s.mux.HandleFunc("POST /device/approve", s.deviceApprove)
+	s.mux.HandleFunc("POST /device/deny", s.deviceDeny)
+	for _, name := range []string{"passkey.js", "style.css"} {
 		s.mux.HandleFunc("GET /static/"+name, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-cache")
 			http.ServeFileFS(w, r, web, "web/static/"+name)
@@ -238,8 +252,9 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
-func render(w http.ResponseWriter, name string, data any) {
+func render(w http.ResponseWriter, status int, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(status)
 	if err := pages.ExecuteTemplate(w, name, data); err != nil {
 		// Headers are gone by now; the diagnostic line shows the 200, and
 		// a template that fails is caught by the tests.

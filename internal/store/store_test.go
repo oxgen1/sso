@@ -111,3 +111,28 @@ func TestConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestAdd(t *testing.T) {
+	c := newClock()
+	s := New[string](2, time.Minute, c.now)
+	if _, err := s.Add("ABCD", "a"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add("ABCD", "b"); !errors.Is(err, ErrExists) {
+		t.Errorf("live key: %v, want ErrExists", err)
+	}
+	if v, _, _ := s.Get("ABCD"); v != "a" {
+		t.Errorf("Add replaced a live entry: %q", v)
+	}
+	// An expired entry's key can be used again.
+	c.t = c.t.Add(time.Minute)
+	if _, err := s.Add("ABCD", "c"); err != nil {
+		t.Errorf("expired key: %v", err)
+	}
+	if _, err := s.Add("EFGH", "d"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Add("IJKL", "e"); !errors.Is(err, ErrFull) {
+		t.Errorf("full: %v, want ErrFull", err)
+	}
+}

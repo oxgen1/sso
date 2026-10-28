@@ -1,0 +1,38 @@
+{{define "device.html"}}{{template "head" "Device sign-in"}}
+<body>
+<main>
+<h1>Device sign-in</h1>
+{{- if .Done}}
+<p>{{.Done}}</p>
+{{- else if .Request}}
+<p>A device is asking for a certificate. Approving with your passkey issues one for you, valid for 8 hours.</p>
+<dl>
+<dt>Code</dt><dd><code>{{.Request.Code}}</code></dd>
+<dt>From</dt><dd>{{.Request.Addr}}</dd>
+<dt>Key</dt><dd><code>{{.Request.Key}}</code></dd>
+<dt>Asked at</dt><dd>{{.Request.At}}</dd>
+</dl>
+<p>Approve only if you just ran <code>mvm login</code> and the device shows this code and key.</p>
+<div id="actions" class="actions">
+<button id="passkey" type="button" data-begin="/device/begin" data-finish="/device/approve" data-code="{{.Request.Code}}">Approve with a passkey</button>
+<form method="post" action="/device/deny">
+<input type="hidden" name="user_code" value="{{.Request.Code}}">
+<button type="submit" class="secondary">Deny</button>
+</form>
+</div>
+<p id="status" role="status"></p>
+<noscript><p>Approving needs JavaScript.</p></noscript>
+<script src="/static/passkey.js"></script>
+{{- else}}
+{{- if .Error}}
+<p class="error" role="alert">{{.Error}}</p>
+{{- end}}
+<form method="get" action="/device" class="actions">
+<label for="user_code">Code shown by the device</label>
+<input id="user_code" name="user_code" placeholder="XXXX-XXXX" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+<button type="submit">Continue</button>
+</form>
+{{- end}}
+</main>
+</body>
+</html>{{end}}

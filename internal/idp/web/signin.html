@@ -3,10 +3,10 @@
 <main>
 <h1>Sign in</h1>
 <p>Use a passkey or security key enrolled for {{.RPID}}.</p>
-<button id="signin" type="button" data-next="{{.Next}}">Sign in with a passkey</button>
+<button id="passkey" type="button" data-begin="/signin/begin" data-finish="/signin/finish" data-next="{{.Next}}">Sign in with a passkey</button>
 <p id="status" role="status"></p>
 <noscript><p>Signing in needs JavaScript.</p></noscript>
 </main>
-<script src="/static/signin.js"></script>
+<script src="/static/passkey.js"></script>
 </body>
 </html>{{end}}

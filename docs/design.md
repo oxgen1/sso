@@ -140,7 +140,32 @@ The approval page builds the summary it shows from the same signature base that 
 - Every POST must carry `Origin` equal to the IdP's origin. Pages send `Referrer-Policy: same-origin` (with `no-referrer`, browsers send `Origin: null` on form posts) and a CSP that allows only the IdP's own script and style.
 - A redirect after sign-in (`next`) must be a path on the IdP itself.
 - The client address, for rate limits and the audit log, is the peer's, except from loopback (Caddy on the same host), where it's the last `X-Forwarded-For` entry. Caddy replaces that header for clients it doesn't trust as proxies, so the last entry is the address it saw.
-- The browser is told only that sign-in failed; the audit log has the reason (`lib/assertion`'s, or `login_challenge` for a challenge that's unknown, expired or used).
+- The browser is told only that sign-in failed; the audit log has the reason (`lib/assertion`'s, or `login_challenge` for a challenge that's unknown, expired, used, or issued for a device approval).
+
+## Device flow and certificates
+
+`mvm login` uses the OAuth device flow (RFC 8628), so the CLI never handles a passkey and stays pure Go.
+
+1. `mvm` makes a P-256 key pair and posts `client_id=mvm` and a PKCS #10 CSR (`csr`, unpadded base64url DER) to `POST /device/code`.
+   - The CSR's signature proves `mvm` holds the key.
+   - The subject must be empty and there must be no extensions: everything in the certificate comes from the configuration.
+   - Only ES256 on P-256 is accepted.
+2. The IdP answers as RFC 8628 §3.2 says: a device code, a user code, the verification URIs, `expires_in` 600 and `interval` 5.
+   - The user code is 8 letters from RFC 8628's base-20 consonant alphabet (about 34.5 bits), shown as `XXXX-XXXX`.
+   - The device code is the user code, a dot and 128 random bits. The user code finds the pending request; the random part, compared in constant time, proves the poller is the device.
+   - At most 100 requests are pending. Each one costs a token from the same per-address bucket as starting a sign-in.
+3. `GET /device` shows the pending request: the code, the address it came from, the key's SHA-256 fingerprint (as OpenSSH writes one; `mvm` prints the same) and when it was asked. **Approving is a passkey assertion**, the same as sign-in (UV required, no `allowCredentials`, the user found from the credential ID), whose challenge is issued for that one request. The touch both says who the user is and approves; the SSO session plays no part, and approving doesn't start one.
+   - So every certificate needs the authenticator at the moment it's issued. With approval through the session, a browser left signed in could mint certificates until the session ended, each lasting 8 h more: up to 16 h from one touch, against the threat model's 8.
+   - A challenge records what it's for. A sign-in challenge can't approve a device, nor the reverse (`login_challenge` either way).
+   - Denying is a plain form post and needs no passkey: anyone with the code can refuse, and refusing grants nothing. It can't undo an approval.
+   - Looking up a code (the page, starting an approval, denying) has a token bucket per address (10, then one every 30 s), so nobody can search the code space.
+   - If the user's certificates are limited to source addresses and the request came from outside them, approving denies it: the certificate would be useless there, and a request from somewhere the user can't be is more likely phishing than travel.
+4. `mvm` polls `POST /device/token` with the device grant. Errors are RFC 8628's: `authorization_pending`, `slow_down` (polling faster than the interval, which then grows by 5 s), `access_denied` and `expired_token`; a wrong secret is `invalid_grant`.
+5. After approval, the next poll gets the certificate, issued then with the user's claims from the configuration, as `{"certificate": "<PEM>"}`. It isn't an OAuth access token, and it's the only non-standard part. The request is removed, so each code yields one certificate.
+
+The audit log has `device_code` (with the user code and key fingerprint), `device_approve` (allow with the user and `passkey_cred_id`; deny with `user_denied`, `source`, `device_expired`, `device_handled`, or any reason a sign-in can fail with) and `certificate` (allow with `cert_serial`, the approving passkey and `not_after`, or deny with `device_code` for a wrong secret).
+
+The CA key is read at start-up from `ca.key` in `$CREDENTIALS_DIRECTORY`, where systemd's `LoadCredential` puts it.
 
 ## Enrollment and recovery
 
@@ -195,7 +220,7 @@ The approval page builds the summary it shows from the same signature base that 
 - In-memory token buckets.
 - Per IP on login and WebAuthn start (each one holds a challenge in memory).
 - Device-flow polling uses `slow_down` (RFC 8628).
-- Certificate issuance and approvals per user.
+- Device-code lookups per IP. Each certificate already costs a passkey touch.
 - Failed verifications per `keyid` and per IP.
 
 ## Testing

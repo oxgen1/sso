@@ -2,7 +2,7 @@
 
 How to run the SSO: the IdP, users and passkeys, and the first sign-in. Connecting services, web apps and clients is in [integration.md](integration.md); the reasoning behind all of it is in [design.md](design.md).
 
-> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init`, `sso config check`, passkey registration (no page yet), and `sso serve` with passkey sign-in and the SSO session. Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
+> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init`, `sso config check`, passkey registration (no page yet), and `sso serve` with passkey sign-in, the SSO session, and the device flow that issues certificates (no `mvm login` yet). Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
 
 ## Pieces
 
@@ -187,11 +187,12 @@ From the laptop, over WireGuard:
 ```sh
 mvm login
 # Open https://id.auth.jack.farm/device and enter WDJB-MJHT
+# Key SHA256:4dWm…Xz0
 # Waiting for approval…
 # Signed in as jack until 18:04 (statusd; roles: write)
 ```
 
-Approve on the page with a passkey. `mvm` made a fresh key pair for this login; the private key never leaves `~/.local/state/mvm/` (mode 0600), and the certificate next to it is valid for 8 hours. Then:
+On the page, check that the code and key fingerprint match what `mvm` printed, and approve with a passkey: the touch is the approval, so it's needed every time, signed in or not. `mvm` made a fresh key pair for this login; the private key never leaves `~/.local/state/mvm/` (mode 0600), and the certificate next to it is valid for 8 hours. Then:
 
 ```sh
 mvm req GET /v1/status

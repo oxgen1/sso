@@ -41,4 +41,22 @@ button {
   cursor: pointer;
 }
 button:disabled { opacity: 0.6; cursor: wait; }
-#status.error { color: var(--error); }
+
+.error, #status.error { color: var(--error); }
+code { font: 0.9em ui-monospace, monospace; color: var(--fg); overflow-wrap: anywhere; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 1rem 0; }
+dt { color: var(--muted); }
+dd { margin: 0; min-width: 0; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+label { flex-basis: 100%; color: var(--muted); }
+input {
+  font: 1.1rem ui-monospace, monospace;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--muted);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  width: 10rem;
+}
+button.secondary { background: transparent; color: var(--fg); box-shadow: inset 0 0 0 1px var(--muted); }
+[hidden] { display: none !important; }

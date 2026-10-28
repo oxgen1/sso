@@ -3,7 +3,7 @@
 //
 //	sso ca init --name NAME [--years N] --out DIR
 //	sso config check FILE
-//	sso serve FILE
+//	sso serve FILE    (CA key: $CREDENTIALS_DIRECTORY/ca.key)
 package main
 
 import (
@@ -16,7 +16,7 @@ import (
 const usage = `usage:
   sso ca init --name NAME [--years N] --out DIR
   sso config check FILE
-  sso serve FILE
+  sso serve FILE    (CA key: $CREDENTIALS_DIRECTORY/ca.key)
 `
 
 func main() {

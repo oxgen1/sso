@@ -97,6 +97,15 @@ func TestServe(t *testing.T) {
 	ln.Close()
 	cfg := writeConfig(t, filepath.Join(dir, "ca.pem"), addr)
 
+	t.Setenv("CREDENTIALS_DIRECTORY", "")
+	if err := serveUntil(context.Background(), []string{cfg}, &bytes.Buffer{}); err == nil {
+		t.Error("no error without CREDENTIALS_DIRECTORY")
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", t.TempDir())
+	if err := serveUntil(context.Background(), []string{cfg}, &bytes.Buffer{}); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("no ca.key: %v", err)
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", dir)
 	ctx, cancel := context.WithCancel(context.Background())
 	errc := make(chan error, 1)
 	var logs bytes.Buffer

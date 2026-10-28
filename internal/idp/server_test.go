@@ -110,6 +110,7 @@ func (a *authenticator) sign(t *testing.T, challenge []byte, o signOpts) finishR
 type env struct {
 	t     *testing.T
 	srv   *Server
+	ca    *cert.CA
 	clock *clock
 	log   *bytes.Buffer
 	jack  *authenticator
@@ -137,7 +138,7 @@ func newEnv(t *testing.T) *env {
 		"caCertificate":"` + caPath + `",
 		"users":{
 			"jack":{"roles":["write"],"services":["statusd"],"sources":[],"passkeys":[` + e.jack.configJSON(t, "yubikey") + `]},
-			"guest":{"roles":[],"services":["grafana"],"sources":[],"passkeys":[` + e.guest.configJSON(t, "phone") + `]}},
+			"guest":{"roles":[],"services":["grafana"],"sources":["192.168.1.0/24"],"passkeys":[` + e.guest.configJSON(t, "phone") + `]}},
 		"clients":{},"audit":{"retentionDays":90}}`
 	cfgPath := filepath.Join(dir, "sso.json")
 	if err := os.WriteFile(cfgPath, []byte(cfgJSON), 0o600); err != nil {
@@ -147,7 +148,11 @@ func newEnv(t *testing.T) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.srv, err = New(cfg, slog.New(slog.NewJSONHandler(e.log, nil)), e.clock.now)
+	if e.ca, err = cert.NewCAFromDER(der, caKey); err != nil {
+		t.Fatal(err)
+	}
+	e.ca.Now = e.clock.now
+	e.srv, err = New(cfg, e.ca, slog.New(slog.NewJSONHandler(e.log, nil)), e.clock.now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -461,7 +466,7 @@ func TestCrossOrigin(t *testing.T) {
 
 func TestBeginRateLimit(t *testing.T) {
 	e := newEnv(t)
-	for i := range beginBurst {
+	for i := range addrBurst {
 		if w := e.do(req{method: "POST", path: "/signin/begin", body: struct{}{}}); w.Code != 200 {
 			t.Fatalf("begin %d: %d", i, w.Code)
 		}
@@ -477,7 +482,7 @@ func TestBeginRateLimit(t *testing.T) {
 		header: http.Header{"X-Forwarded-For": {"10.0.0.5"}}}); w.Code != http.StatusTooManyRequests {
 		t.Errorf("same address through Caddy: %d", w.Code)
 	}
-	e.clock.t = e.clock.t.Add(beginEvery)
+	e.clock.t = e.clock.t.Add(addrEvery)
 	if w := e.do(req{method: "POST", path: "/signin/begin", body: struct{}{}}); w.Code != 200 {
 		t.Errorf("after refill: %d", w.Code)
 	}
@@ -547,7 +552,7 @@ func TestSafeNext(t *testing.T) {
 
 func TestHeadersAndStatic(t *testing.T) {
 	e := newEnv(t)
-	for _, path := range []string{"/signin", "/static/signin.js", "/static/style.css"} {
+	for _, path := range []string{"/signin", "/static/passkey.js", "/static/style.css"} {
 		w := e.do(req{method: "GET", path: path})
 		if w.Code != 200 {
 			t.Errorf("%s: %d", path, w.Code)

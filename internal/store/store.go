@@ -1,5 +1,5 @@
-// Package store keeps short-lived entries in memory under random keys:
-// pending WebAuthn challenges, SSO sessions and, later, device codes. Each
+// Package store keeps short-lived entries in memory under unguessable keys:
+// pending WebAuthn challenges, SSO sessions and device codes. Each
 // store has a size limit and a single lifetime for its entries, so memory use
 // is bounded and a restart only signs people out.
 package store
@@ -11,8 +11,13 @@ import (
 	"time"
 )
 
-// ErrFull is returned by Put when the store holds max live entries.
-var ErrFull = errors.New("store: full")
+var (
+	// ErrFull is returned by Put and Add when the store holds max live
+	// entries.
+	ErrFull = errors.New("store: full")
+	// ErrExists is returned by Add when a live entry has the key already.
+	ErrExists = errors.New("store: key exists")
+)
 
 // Store maps random keys to values of type V.
 type Store[V any] struct {
@@ -36,12 +41,26 @@ func New[V any](max int, ttl time.Duration, now func() time.Time) *Store[V] {
 }
 
 // Put stores v under a new key of 128 random bits and returns the key and
-// when the entry expires. Expired entries are only swept once the store is
-// full, so a full store costs one pass over it per Put.
+// when the entry expires.
 func (s *Store[V]) Put(v V) (string, time.Time, error) {
+	key := rand.Text()
+	expires, err := s.Add(key, v)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	return key, expires, nil
+}
+
+// Add stores v under a key the caller chose, such as a device flow's user
+// code, and returns when the entry expires. Expired entries are only swept
+// once the store is full, so a full store costs one pass over it per Add.
+func (s *Store[V]) Add(key string, v V) (time.Time, error) {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if e, ok := s.entries[key]; ok && now.Before(e.expires) {
+		return time.Time{}, ErrExists
+	}
 	if len(s.entries) >= s.max {
 		for k, e := range s.entries {
 			if !now.Before(e.expires) {
@@ -49,13 +68,12 @@ func (s *Store[V]) Put(v V) (string, time.Time, error) {
 			}
 		}
 		if len(s.entries) >= s.max {
-			return "", time.Time{}, ErrFull
+			return time.Time{}, ErrFull
 		}
 	}
-	key := rand.Text()
 	expires := now.Add(s.ttl)
 	s.entries[key] = entry[V]{v: v, expires: expires}
-	return key, expires, nil
+	return expires, nil
 }
 
 // Get returns the live entry under key and when it expires.

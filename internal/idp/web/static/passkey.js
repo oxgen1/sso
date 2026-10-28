@@ -1,6 +1,8 @@
 "use strict";
-// Passkey sign-in: get a challenge, have the browser sign it, post the
-// assertion back. The server checks everything; this only moves bytes.
+// Passkey sign-in and device approval: get a challenge, have the browser
+// sign it, post the assertion back. The server checks everything; this only
+// moves bytes. The button says where to post (data-begin, data-finish),
+// which request it approves (data-code), and where to go after (data-next).
 
 const b64url = {
   encode(buf) {
@@ -21,12 +23,12 @@ async function post(path, body) {
     body: JSON.stringify(body),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new Error(data.error || `Sign-in failed (${resp.status}).`);
+  if (!resp.ok) throw new Error(data.error || `Failed (${resp.status}).`);
   return data;
 }
 
-async function signIn() {
-  const begin = await post("/signin/begin", {});
+async function assert(d) {
+  const begin = await post(d.begin, d.code ? { userCode: d.code } : {});
   const cred = await navigator.credentials.get({
     publicKey: {
       challenge: b64url.decode(begin.challenge),
@@ -36,7 +38,7 @@ async function signIn() {
     },
   });
   const r = cred.response;
-  await post("/signin/finish", {
+  return post(d.finish, {
     id: begin.id,
     credentialId: b64url.encode(cred.rawId),
     authenticatorData: b64url.encode(r.authenticatorData),
@@ -45,7 +47,7 @@ async function signIn() {
   });
 }
 
-const button = document.getElementById("signin");
+const button = document.getElementById("passkey");
 const status = document.getElementById("status");
 
 button.addEventListener("click", async () => {
@@ -53,7 +55,12 @@ button.addEventListener("click", async () => {
   status.className = "";
   status.textContent = "Waiting for your passkey…";
   try {
-    await signIn();
+    const data = await assert(button.dataset);
+    if (data.message) {
+      status.textContent = data.message;
+      document.getElementById("actions").hidden = true;
+      return;
+    }
     // The server rendered next after checking it's a path on this host.
     location.assign(button.dataset.next);
   } catch (e) {
