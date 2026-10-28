@@ -76,7 +76,7 @@ func checkRoles(roles []string) error {
 		return errors.New("empty role list")
 	}
 	for i, r := range roles {
-		if !validName(r) {
+		if !ValidName(r) {
 			return errors.New("invalid role name")
 		}
 		if i > 0 && roles[i-1] >= r {
@@ -217,9 +217,9 @@ func recheck[T any](der []byte, v T, encode func(T) ([]byte, error)) error {
 	return nil
 }
 
-// validName reports whether s is a user, role or service name: a lowercase
+// ValidName reports whether s is a user, role or service name: a lowercase
 // letter, then up to 31 lowercase letters, digits or hyphens.
-func validName(s string) bool {
+func ValidName(s string) bool {
 	if len(s) == 0 || len(s) > 32 || s[0] < 'a' || s[0] > 'z' {
 		return false
 	}

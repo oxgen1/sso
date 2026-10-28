@@ -29,7 +29,7 @@ type Verifier struct {
 // NewVerifier makes a Verifier for service, trusting only the CA certificate
 // caDER.
 func NewVerifier(caDER []byte, service string) (*Verifier, error) {
-	if !validName(service) {
+	if !ValidName(service) {
 		return nil, fmt.Errorf("cert: invalid service name %q", service)
 	}
 	ca, err := parseCA(caDER)

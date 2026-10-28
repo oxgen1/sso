@@ -76,7 +76,7 @@ func (ca *CA) Issue(pub *ecdsa.PublicKey, c Claims) ([]byte, *Cert, error) {
 }
 
 func (ca *CA) template(pub *ecdsa.PublicKey, c Claims) (*x509.Certificate, error) {
-	if err := c.check(); err != nil {
+	if err := c.Check(); err != nil {
 		return nil, fmt.Errorf("cert: %w", err)
 	}
 	if pub.Curve != elliptic.P256() {

@@ -428,3 +428,44 @@ func TestWithHTTPSig(t *testing.T) {
 		t.Errorf("approval reused on another request: %v", err)
 	}
 }
+
+// TestCheckChallenge is sign-in: a random challenge and the passkeys from the
+// IdP's configuration, with no certificate.
+func TestCheckChallenge(t *testing.T) {
+	v := newVerifier(t)
+	auth, other := newAuthenticator(t), newAuthenticator(t)
+	challenge := make([]byte, 32)
+	rand.Read(challenge)
+	r := auth.response(nil)
+	r.challenge = challenge
+	a := r.sign(t)
+	keys := certFor(other, auth).Passkeys
+	if err := v.CheckChallenge(a, challenge, keys); err != nil {
+		t.Fatal(err)
+	}
+	if err := v.CheckChallenge(a, challenge, keys[:1]); ReasonOf(err) != ReasonCredential {
+		t.Errorf("other user's passkeys: %v", err)
+	}
+	if err := v.CheckChallenge(a, Challenge(challenge), keys); ReasonOf(err) != ReasonChallenge {
+		t.Errorf("wrong challenge: %v", err)
+	}
+}
+
+// TestCheckClientDataCreate is registration, which has no assertion around
+// the client data.
+func TestCheckClientDataCreate(t *testing.T) {
+	v := newVerifier(t)
+	challenge := []byte{1, 2, 3}
+	cd := func(typ string) []byte {
+		return []byte(`{"type":"` + typ + `","challenge":"AQID","origin":"` + testOrigin + `","crossOrigin":false}`)
+	}
+	if err := v.CheckClientData(cd("webauthn.create"), "webauthn.create", challenge); err != nil {
+		t.Error(err)
+	}
+	if err := v.CheckClientData(cd("webauthn.get"), "webauthn.create", challenge); ReasonOf(err) != ReasonType {
+		t.Errorf("get as create: %v", err)
+	}
+	if err := v.CheckClientData(cd("webauthn.create"), "webauthn.get", challenge); ReasonOf(err) != ReasonType {
+		t.Errorf("create as get: %v", err)
+	}
+}

@@ -93,15 +93,23 @@ func (v *Verifier) Verify(r *http.Request, got *httpsig.Verified[*cert.Cert]) er
 // it (rp, flags, type, challenge, origin) are only reported for assertions the
 // passkey really made.
 func (v *Verifier) Check(a *Assertion, base []byte, c *cert.Cert) error {
+	return v.CheckChallenge(a, Challenge(base), c.Passkeys)
+}
+
+// CheckChallenge verifies a against challenge and passkeys, in the same order
+// as Check. The IdP uses it for sign-in, where the challenge is random and the
+// passkeys come from its configuration.
+func (v *Verifier) CheckChallenge(a *Assertion, challenge []byte, passkeys []cert.Passkey) error {
 	ad := a.AuthenticatorData
 	if len(ad) < authDataLen {
 		return fail(ReasonMalformed, "authenticatorData is %d bytes", len(ad))
 	}
-	p, ok := c.Passkey(a.CredentialID)
-	if !ok {
-		return fail(ReasonCredential, "credential %s not in certificate %s",
-			base64.RawURLEncoding.EncodeToString(a.CredentialID), c.Serial)
+	i := slices.IndexFunc(passkeys, func(p cert.Passkey) bool { return bytes.Equal(p.ID, a.CredentialID) })
+	if i < 0 {
+		return fail(ReasonCredential, "credential %s isn't one of %d passkeys",
+			base64.RawURLEncoding.EncodeToString(a.CredentialID), len(passkeys))
 	}
+	p := passkeys[i]
 	cd := sha256.Sum256(a.ClientDataJSON)
 	signed := sha256.Sum256(append(slices.Clip(ad), cd[:]...))
 	if !ecdsa.VerifyASN1(p.Key, signed[:], a.Signature) {
@@ -121,19 +129,20 @@ func (v *Verifier) Check(a *Assertion, base []byte, c *cert.Cert) error {
 	if len(ad) != authDataLen {
 		return fail(ReasonMalformed, "authenticatorData is %d bytes", len(ad))
 	}
-	return v.checkClientData(a.ClientDataJSON, Challenge(base))
+	return v.CheckClientData(a.ClientDataJSON, "webauthn.get", challenge)
 }
 
-// checkClientData follows WebAuthn's limited verification algorithm
+// CheckClientData follows WebAuthn's limited verification algorithm
 // (§5.8.1.2): browsers serialize type, challenge and origin first and in that
 // order, so those are compared as bytes and no JSON parser decides what they
-// are. The rest is parsed only to refuse crossOrigin and topOrigin.
-func (v *Verifier) checkClientData(cd, challenge []byte) error {
+// are. The rest is parsed only to refuse crossOrigin and topOrigin. typ is
+// webauthn.get for an assertion, webauthn.create for a registration.
+func (v *Verifier) CheckClientData(cd []byte, typ string, challenge []byte) error {
 	rest, ok := bytes.CutPrefix(cd, []byte(`{"type":"`))
 	if !ok {
 		return fail(ReasonMalformed, "clientDataJSON doesn't start with type")
 	}
-	if rest, ok = bytes.CutPrefix(rest, []byte(`webauthn.get"`)); !ok {
+	if rest, ok = bytes.CutPrefix(rest, []byte(typ+`"`)); !ok {
 		return fail(ReasonType, "clientDataJSON %.40q", cd)
 	}
 	want := `,"challenge":"` + base64.RawURLEncoding.EncodeToString(challenge) + `","origin":"`

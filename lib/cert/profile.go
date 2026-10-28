@@ -62,15 +62,17 @@ func (c *Cert) Passkey(id []byte) (Passkey, bool) {
 	return c.Passkeys[i], true
 }
 
-func (c Claims) check() error {
-	if !validName(c.User) {
+// Check reports whether c is something Issue will put in a certificate. The
+// IdP runs it on every user when it loads its configuration.
+func (c Claims) Check() error {
+	if !ValidName(c.User) {
 		return errors.New("invalid user name")
 	}
 	if len(c.Services) == 0 {
 		return errors.New("no services")
 	}
 	for i, s := range c.Services {
-		if !validName(s) || slices.Contains(c.Services[:i], s) {
+		if !ValidName(s) || slices.Contains(c.Services[:i], s) {
 			return fmt.Errorf("service %q invalid or repeated", s)
 		}
 	}
@@ -169,7 +171,7 @@ func fromX509(x *x509.Certificate) (*Cert, error) {
 	if len(required) > 0 {
 		return nil, fmt.Errorf("missing extension %v", required[0])
 	}
-	if err := c.check(); err != nil {
+	if err := c.Check(); err != nil {
 		return nil, err
 	}
 	return c, nil
