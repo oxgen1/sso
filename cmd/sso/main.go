@@ -4,6 +4,7 @@
 //	sso ca init --name NAME [--years N] --out DIR
 //	sso config check FILE
 //	sso serve FILE    (CA key: $CREDENTIALS_DIRECTORY/ca.key)
+//	sso enroll [--ca-key KEY] FILE USER
 package main
 
 import (
@@ -17,6 +18,7 @@ const usage = `usage:
   sso ca init --name NAME [--years N] --out DIR
   sso config check FILE
   sso serve FILE    (CA key: $CREDENTIALS_DIRECTORY/ca.key)
+  sso enroll [--ca-key KEY] FILE USER
 `
 
 func main() {
@@ -34,8 +36,13 @@ func run(args []string, out io.Writer) error {
 	case "config check":
 		return configCheck(args[2:], out)
 	}
-	if len(args) > 0 && args[0] == "serve" {
-		return serve(args[1:])
+	if len(args) > 0 {
+		switch args[0] {
+		case "serve":
+			return serve(args[1:])
+		case "enroll":
+			return enroll(args[1:], out)
+		}
 	}
 	return fmt.Errorf("unknown command %q\n%s", cmd, usage)
 }

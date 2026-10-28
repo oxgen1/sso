@@ -22,7 +22,7 @@ Logging, rate limits and tests are part of every milestone, not a phase at the e
   - [x] SSO session: `__Host-sso` cookie (HttpOnly, Secure, SameSite=Strict), 8 h absolute, replaced on a new sign-in, ended by sign-out. In-memory stores (`internal/store`) and token buckets (`internal/ratelimit`), both with size limits. `sso serve`.
   - [ ] Try sign-in in a real browser once DNS and the certificate exist.
   - [x] Device flow (RFC 8628) and certificate issuance: a CSR proves the key, each approval is a passkey assertion (not the session) with the source addresses checked, one certificate per code, `slow_down`, rate limits per address. CA key from `$CREDENTIALS_DIRECTORY`.
-  - [ ] `sso enroll` and its page.
+  - [x] `sso enroll` and its page: an HMAC link (key derived from the CA key), single use, the snippet on the page and in the audit log. RP ID `localhost` with `http://localhost:PORT` for trying it on a laptop.
 - [x] `internal/config`: users, roles, passkey keys and clients from the JSON the Nix module writes, all checked at load (each user's claims through `cert.Claims.Check`, credential IDs unique across users); CA key (PKCS #8) from `LoadCredential`. `sso ca init` and `sso config check` (for a build-time check in the module).
 - [x] `internal/webauthn`: registration (attestation `none`, ES256 only) with strict CBOR; tested against the WebAuthn L3 §16.2 vector, 30 mutation cases and a fuzzer. `lib/assertion` gained `CheckChallenge` (sign-in) and `CheckClientData` (shared with registration).
 - [ ] Audit log with a hash chain; diagnostic log; rate limits.
@@ -43,7 +43,7 @@ Logging, rate limits and tests are part of every milestone, not a phase at the e
 
 ## 6. Nix
 
-- [ ] `packages.sso`, `nixosModules.sso`, hardened units (as with statusd).
+- [ ] `packages.sso`, `nixosModules.sso`, hardened units (as with statusd). A wrapper that passes the configuration and the CA key, so `sudo sso enroll jack` works as setup.md says.
 - [ ] NixOS VM test: software authenticator, end-to-end flows, interop check of signatures against an independent RFC 9421 implementation.
 - [ ] Deploy on its own VM over WireGuard; NTP on every host.
 

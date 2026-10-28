@@ -2,7 +2,7 @@
 
 How to run the SSO: the IdP, users and passkeys, and the first sign-in. Connecting services, web apps and clients is in [integration.md](integration.md); the reasoning behind all of it is in [design.md](design.md).
 
-> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init`, `sso config check`, passkey registration (no page yet), and `sso serve` with passkey sign-in, the SSO session, and the device flow that issues certificates (no `mvm login` yet). Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
+> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init`, `sso config check`, passkey registration (no page yet), and `sso serve` with passkey sign-in, the SSO session, the device flow that issues certificates (no `mvm login` yet), and `sso enroll`. To try it on a laptop, see [Try it locally](#try-it-locally). Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
 
 ## Pieces
 
@@ -160,17 +160,62 @@ The web-app side (Caddy and `sso-proxy` on `farm-1`) is in [integration.md](inte
 
 Certificate lifetime (8 h), the signature profile and the algorithm are fixed in the library, not options.
 
+## Try it locally
+
+No DNS, TLS or Nix module needed: with RP ID `localhost`, the IdP accepts the origin `http://localhost:PORT`, and browsers allow passkeys and Secure cookies there. Passkeys made for `localhost` only work on `localhost`, so use a throwaway one.
+
+```sh
+cd ~/Dev/sso
+nix develop . -c go build -o /tmp/sso-dev/sso ./cmd/sso
+cd /tmp/sso-dev
+./sso ca init --name "dev CA" --out ca
+cat > sso.json <<EOF
+{"rpId":"localhost","origin":"http://localhost:9300","listenAddress":"127.0.0.1:9300",
+ "caCertificate":"$PWD/ca/ca.pem",
+ "users":{"jack":{"roles":["write"],"services":["statusd"],"sources":[],"passkeys":[]}},
+ "clients":{},"audit":{"retentionDays":90}}
+EOF
+CREDENTIALS_DIRECTORY=$PWD/ca ./sso serve sso.json
+```
+
+1. **Enroll.** In another terminal: `./sso enroll --ca-key ca/ca.key sso.json jack`. Open the link, name the passkey and register it. For a software passkey, use Chrome DevTools → More tools → WebAuthn → "Enable virtual authenticator environment", with resident keys and user verification on. Add the result to `passkeys` in `sso.json` as JSON (`{"name":"…","id":"…","publicKey":"…"}`, the snippet's three values) and restart `sso serve`.
+2. **Sign in** at <http://localhost:9300/signin>.
+3. **Device flow,** as `mvm login` will do it:
+
+   ```sh
+   openssl ecparam -name prime256v1 -genkey -noout -out dev.key
+   openssl req -new -key dev.key -subj / -sha256 -outform DER -out dev.csr
+   curl -s localhost:9300/device/code -d client_id=mvm -d csr=$(basenc --base64url -w0 dev.csr | tr -d =)
+   ```
+
+   Open `verification_uri_complete` and check the key fingerprint against this:
+
+   ```sh
+   echo SHA256:$(openssl pkey -in dev.key -pubout -outform DER | openssl dgst -sha256 -binary | base64 | tr -d =)
+   ```
+
+   Approve with the passkey, then collect the certificate:
+
+   ```sh
+   curl -s localhost:9300/device/token -d client_id=mvm \
+     -d grant_type=urn:ietf:params:oauth:grant-type:device_code -d device_code=DEVICE_CODE
+   ```
+
+   It's PEM inside JSON. `openssl x509 -text` shows the user, the service URIs, and the roles and passkeys as private extensions.
+
+The first terminal shows the audit and diagnostic logs as JSON lines.
+
 ## Enroll passkeys
 
 On the IdP host:
 
 ```sh
 sudo sso enroll jack
-# Enrollment link for jack, valid 10 minutes, single use:
-#   https://id.auth.jack.farm/enroll/7Hq2…
+# Enrollment link for jack, for one passkey, until 17:42 CET:
+#   https://id.auth.jack.farm/enroll/jack.1793…
 ```
 
-Open the link on the device whose passkey you're registering (or with the YubiKey plugged in), touch the key, and give it a name. The page prints a snippet:
+Open the link on the device whose passkey you're registering (or with the YubiKey plugged in), give the passkey a name, and touch the key. The page prints a snippet (the IdP's audit log has it too):
 
 ```nix
 { name = "yubikey-5c"; id = "kO3v…"; publicKey = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE…"; }

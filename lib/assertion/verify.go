@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/oxgen1/sso/lib/cert"
@@ -44,9 +45,16 @@ type Verifier struct {
 
 // NewVerifier returns a Verifier for passkeys bound to rpID, used on the page
 // at origin, which must be https on rpID or a subdomain of it, with no port.
+//
+// The one exception is for trying the IdP on a laptop: with RP ID localhost,
+// the origin may be http://localhost:PORT. Browsers treat localhost as a
+// secure context, so WebAuthn and Secure cookies work there without TLS.
 func NewVerifier(rpID, origin string) (*Verifier, error) {
 	if !validHost(rpID) {
 		return nil, fmt.Errorf("RP ID %q isn't a lowercase DNS name", rpID)
+	}
+	if rpID == "localhost" && isLocalhostOrigin(origin) {
+		return &Verifier{rpIDHash: sha256.Sum256([]byte(rpID)), origin: origin}, nil
 	}
 	host, ok := strings.CutPrefix(origin, "https://")
 	if !ok || !validHost(host) {
@@ -56,6 +64,14 @@ func NewVerifier(rpID, origin string) (*Verifier, error) {
 		return nil, fmt.Errorf("origin %q isn't on RP ID %q", origin, rpID)
 	}
 	return &Verifier{rpIDHash: sha256.Sum256([]byte(rpID)), origin: origin}, nil
+}
+
+// isLocalhostOrigin reports whether origin is http://localhost:PORT, the
+// port in its shortest decimal form.
+func isLocalhostOrigin(origin string) bool {
+	port, ok := strings.CutPrefix(origin, "http://localhost:")
+	n, err := strconv.Atoi(port)
+	return ok && err == nil && n > 0 && n < 65536 && strconv.Itoa(n) == port
 }
 
 // validHost reports whether s is dot-separated labels of lowercase letters,

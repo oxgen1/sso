@@ -1,0 +1,24 @@
+{{define "enroll.html"}}{{template "head" "Register a passkey"}}
+<body>
+<main>
+<h1>Register a passkey</h1>
+{{- if .Error}}
+<p class="error" role="alert">{{.Error}}</p>
+{{- else}}
+<p>For <strong>{{.User}}</strong>. This link registers one passkey, until {{.Until}}.</p>
+<div id="actions" class="actions">
+<label for="name">Name for this passkey</label>
+<input id="name" maxlength="32" placeholder="yubikey-5c" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+<button id="passkey" type="button" data-create="" data-begin="/enroll/begin" data-finish="/enroll/finish" data-token="{{.Token}}">Register</button>
+</div>
+<p id="status" role="status"></p>
+<div id="result" hidden>
+<p>Add this to <code>users.{{.User}}.passkeys</code> and deploy. Until then the passkey can't sign in. It's in the IdP's audit log too.</p>
+<pre><code id="snippet"></code></pre>
+</div>
+<noscript><p>Registering needs JavaScript.</p></noscript>
+<script src="/static/passkey.js"></script>
+{{- end}}
+</main>
+</body>
+</html>{{end}}

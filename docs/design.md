@@ -170,13 +170,19 @@ The CA key is read at start-up from `ca.key` in `$CREDENTIALS_DIRECTORY`, where 
 ## Enrollment and recovery
 
 - Users, roles and passkey public keys are declared in the Nix configuration. Public keys aren't secret, so the IdP has no user database.
-- `sso enroll <user>`, run on the IdP host, prints a one-time enrollment link that lasts 10 minutes. Registering a passkey there prints the Nix snippet to paste into the configuration.
+- `sso enroll <user>`, run on the IdP host, prints a one-time enrollment link that lasts 10 minutes. Registering a passkey there prints the Nix snippet to paste into the configuration. The snippet is in the audit log too (`enroll`), so whoever deploys it can take it from there rather than from whoever registered.
+- The link is `/enroll/USER.EXPIRES.NONCE.MAC`: an HMAC-SHA256 under a key derived from the CA key with HKDF (info `sso enroll link v1`). `sso enroll` and `sso serve` share nothing but the key they both already hold, and only someone who can read it can make a link. The MAC is checked before anything else in the link.
+  - The link is used up by the first registration that succeeds; the server remembers used nonces until the links expire. A restart forgets them, so a link could be used again within its 10 minutes. That's accepted: a registration does nothing until someone pastes it into the configuration.
+  - The token is kept out of the diagnostic log (the path is logged as `/enroll/…`).
+- The page asks for a name first, checked before anyone touches a key (a valid name, not already used by that user). The browser is told to make a discoverable ES256 credential with UV required, and not to make a second one on an authenticator that already has one of the user's passkeys (`excludeCredentials`). The user handle is the first 16 bytes of a SHA-256 of the user name: stable, and nothing reads it back.
+- A credential ID already enrolled for anyone is refused. A challenge records that it's for enrollment, so it can't sign in or approve, nor the reverse.
 - Registration asks for attestation `none` and accepts only that: an ES256 key on P-256, UP and UV set, no extensions, and `clientDataJSON` checked with the same limited verification as approvals (type `webauthn.create`). With no attestation nothing is signed, so what ties the key to the enrollment is the challenge, which only the holder of the link has. The attestation object is the only CBOR in the system; `internal/webauthn` decodes it with `fxamacker/cbor` in a strict mode (no duplicate keys, indefinite lengths, tags or unknown fields).
 - For recovery, enroll at least two authenticators (two YubiKeys, or a YubiKey plus a passkey). There is no TOTP or email fallback.
 
 ## Transport, names and clocks
 
 - **RP ID:** `auth.jack.farm`. The IdP is served at `https://id.auth.jack.farm`.
+  - The only other origin accepted is `http://localhost:PORT` with RP ID `localhost`, for trying the IdP on a laptop. Browsers treat localhost as a secure context, so WebAuthn and Secure cookies work there without TLS.
   - Every passkey is tied to the RP ID permanently. The host name can still change within `*.auth.jack.farm` without re-enrolling anyone.
   - `*.auth.jack.farm` is reserved for SSO code. Any origin under the RP ID can ask for a passkey assertion, so no other app is hosted there.
   - Services check `clientDataJSON.origin` against `https://id.auth.jack.farm` exactly, so an assertion made on any other page is rejected.

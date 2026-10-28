@@ -1,5 +1,5 @@
 // Package idp serves the IdP's pages and endpoints: passkey sign-in, the SSO
-// session, and the device flow that issues certificates.
+// session, the device flow that issues certificates, and enrollment.
 package idp
 
 import (
@@ -21,6 +21,7 @@ import (
 	"github.com/oxgen1/sso/internal/config"
 	"github.com/oxgen1/sso/internal/ratelimit"
 	"github.com/oxgen1/sso/internal/store"
+	"github.com/oxgen1/sso/internal/webauthn"
 	"github.com/oxgen1/sso/lib/assertion"
 	"github.com/oxgen1/sso/lib/cert"
 )
@@ -71,6 +72,9 @@ type Server struct {
 	cfg        *config.Config
 	ca         *cert.CA
 	verifier   *assertion.Verifier
+	registrar  *webauthn.RP
+	enrollKey  []byte
+	enrolled   *store.Store[struct{}] // nonces of used enrollment links
 	challenges *store.Store[challenge]
 	sessions   *store.Store[Session]
 	devices    *store.Store[*deviceAuth]
@@ -90,10 +94,21 @@ func New(cfg *config.Config, ca *cert.CA, log *slog.Logger, now func() time.Time
 	if err != nil {
 		return nil, err
 	}
+	reg, err := webauthn.New(cfg.RPID, cfg.Origin)
+	if err != nil {
+		return nil, err
+	}
+	key, err := enrollKey(ca)
+	if err != nil {
+		return nil, err
+	}
 	s := &Server{
 		cfg:        cfg,
 		ca:         ca,
 		verifier:   v,
+		registrar:  reg,
+		enrollKey:  key,
+		enrolled:   store.New[struct{}](maxEnrolls, enrollTTL, now),
 		challenges: store.New[challenge](maxChallenges, challengeTTL, now),
 		sessions:   store.New[Session](maxSessions, sessionTTL, now),
 		devices:    store.New[*deviceAuth](maxDevices, deviceTTL, now),
@@ -114,6 +129,9 @@ func New(cfg *config.Config, ca *cert.CA, log *slog.Logger, now func() time.Time
 	s.mux.HandleFunc("POST /device/begin", s.deviceBegin)
 	s.mux.HandleFunc("POST /device/approve", s.deviceApprove)
 	s.mux.HandleFunc("POST /device/deny", s.deviceDeny)
+	s.mux.HandleFunc("GET /enroll/{token}", s.enrollPage)
+	s.mux.HandleFunc("POST /enroll/begin", s.enrollBegin)
+	s.mux.HandleFunc("POST /enroll/finish", s.enrollFinish)
 	for _, name := range []string{"passkey.js", "style.css"} {
 		s.mux.HandleFunc("GET /static/"+name, func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Cache-Control", "no-cache")
@@ -140,8 +158,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("Cache-Control", "no-store")
 	sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 	s.mux.ServeHTTP(sw, r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id)))
-	// The path only: a query may one day carry a code.
-	s.log.Info("request", "log", "diag", "request_id", id, "method", r.Method, "path", r.URL.Path,
+	// The path only, as a query may carry a code, and not an enrollment
+	// link's token.
+	path := r.URL.Path
+	if strings.HasPrefix(path, "/enroll/") && path != "/enroll/begin" && path != "/enroll/finish" {
+		path = "/enroll/…"
+	}
+	s.log.Info("request", "log", "diag", "request_id", id, "method", r.Method, "path", path,
 		"status", sw.status, "client_ip", clientAddr(r).String(), "ms", time.Since(start).Milliseconds())
 }
 

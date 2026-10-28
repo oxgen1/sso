@@ -19,11 +19,13 @@ import (
 // lib/assertion's.
 const reasonChallenge = "login_challenge"
 
-// challenge is a pending WebAuthn get. For a device approval, userCode is
-// the request it approves; for a sign-in it's empty.
+// challenge is a pending WebAuthn ceremony and what it's for: a device
+// approval names the request in userCode, an enrollment (a create rather
+// than a get) carries its link, and a sign-in has neither.
 type challenge struct {
 	bytes    []byte
 	userCode string
+	enroll   *enrollment
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
@@ -69,25 +71,33 @@ func (s *Server) begin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) newChallenge(w http.ResponseWriter, r *http.Request, userCode string) {
+	if b, ok := s.newChallengeFor(w, r, challenge{userCode: userCode}); ok {
+		writeJSON(w, http.StatusOK, b)
+	}
+}
+
+// newChallengeFor stores a fresh challenge for ch's purpose and returns what
+// the browser needs, or answers with an error and returns false.
+func (s *Server) newChallengeFor(w http.ResponseWriter, r *http.Request, ch challenge) (beginResponse, bool) {
 	if !s.addrLimit.Allow(ratelimit.AddrKey(clientAddr(r))) {
 		s.log.Warn("passkey rate limit", "log", "diag", "request_id", requestID(r), "client_ip", clientAddr(r).String())
 		writeError(w, http.StatusTooManyRequests, "Too many attempts. Wait a minute and try again.")
-		return
+		return beginResponse{}, false
 	}
-	b := make([]byte, 32)
-	_, _ = rand.Read(b) // never fails
-	id, _, err := s.challenges.Put(challenge{bytes: b, userCode: userCode})
+	ch.bytes = make([]byte, 32)
+	_, _ = rand.Read(ch.bytes) // never fails
+	id, _, err := s.challenges.Put(ch)
 	if err != nil {
 		s.log.Warn("challenge store full", "log", "diag", "request_id", requestID(r))
 		writeError(w, http.StatusServiceUnavailable, "Too many sign-ins in progress. Try again shortly.")
-		return
+		return beginResponse{}, false
 	}
-	writeJSON(w, http.StatusOK, beginResponse{
+	return beginResponse{
 		ID:        id,
-		Challenge: base64.RawURLEncoding.EncodeToString(b),
+		Challenge: base64.RawURLEncoding.EncodeToString(ch.bytes),
 		RPID:      s.cfg.RPID,
 		Timeout:   webauthnTimeout.Milliseconds(),
-	})
+	}, true
 }
 
 // finishRequest is the response of navigator.credentials.get, each field
@@ -171,7 +181,7 @@ func (s *Server) checkAssertion(w http.ResponseWriter, r *http.Request, action s
 		return nil, config.Passkey{}, "", nil, false
 	}
 	ch, ok := s.challenges.Take(req.ID)
-	if !ok || (ch.userCode != "") != device {
+	if !ok || ch.enroll != nil || (ch.userCode != "") != device {
 		s.denyAssertion(w, r, action, reasonChallenge, nil)
 		return nil, config.Passkey{}, "", nil, false
 	}

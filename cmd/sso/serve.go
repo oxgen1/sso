@@ -15,6 +15,7 @@ import (
 
 	"github.com/oxgen1/sso/internal/config"
 	"github.com/oxgen1/sso/internal/idp"
+	"github.com/oxgen1/sso/lib/cert"
 )
 
 // serve runs the IdP until SIGINT or SIGTERM.
@@ -35,11 +36,7 @@ func serveUntil(ctx context.Context, args []string, logOut io.Writer) error {
 	if err != nil {
 		return err
 	}
-	creds := os.Getenv("CREDENTIALS_DIRECTORY")
-	if creds == "" {
-		return errors.New("serve: CREDENTIALS_DIRECTORY isn't set; it holds ca.key")
-	}
-	ca, err := cfg.LoadCA(filepath.Join(creds, "ca.key"))
+	ca, err := loadCA(cfg, "")
 	if err != nil {
 		return err
 	}
@@ -73,4 +70,17 @@ func serveUntil(ctx context.Context, args []string, logOut io.Writer) error {
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdown)
+}
+
+// loadCA reads the CA key from keyFile, or, when that's empty, from ca.key
+// in $CREDENTIALS_DIRECTORY, where systemd's LoadCredential puts it.
+func loadCA(cfg *config.Config, keyFile string) (*cert.CA, error) {
+	if keyFile == "" {
+		creds := os.Getenv("CREDENTIALS_DIRECTORY")
+		if creds == "" {
+			return nil, errors.New("CREDENTIALS_DIRECTORY isn't set; it holds ca.key")
+		}
+		keyFile = filepath.Join(creds, "ca.key")
+	}
+	return cfg.LoadCA(keyFile)
 }

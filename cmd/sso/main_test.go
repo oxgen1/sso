@@ -133,3 +133,33 @@ func TestServe(t *testing.T) {
 		t.Errorf("logs: %s", logs.String())
 	}
 }
+
+func TestEnroll(t *testing.T) {
+	dir := t.TempDir()
+	if err := run([]string{"ca", "init", "--name", "test CA", "--out", dir}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := writeConfig(t, filepath.Join(dir, "ca.pem"), "127.0.0.1:9300")
+	var out bytes.Buffer
+	if err := run([]string{"enroll", "--ca-key", filepath.Join(dir, "ca.key"), cfg, "jack"}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Enrollment link for jack") || !strings.Contains(out.String(), "  https://id.auth.jack.farm/enroll/jack.") {
+		t.Errorf("output %q", out.String())
+	}
+	t.Setenv("CREDENTIALS_DIRECTORY", dir)
+	if err := run([]string{"enroll", cfg, "jack"}, &bytes.Buffer{}); err != nil {
+		t.Errorf("key from CREDENTIALS_DIRECTORY: %v", err)
+	}
+	for _, args := range [][]string{
+		{"enroll", cfg, "root"},
+		{"enroll", cfg},
+		{"enroll", "--nope", cfg, "jack"},
+		{"enroll", "/nonexistent", "jack"},
+		{"enroll", "--ca-key", "/nonexistent", cfg, "jack"},
+	} {
+		if err := run(args, &bytes.Buffer{}); err == nil {
+			t.Errorf("%q: no error", args)
+		}
+	}
+}

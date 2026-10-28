@@ -343,6 +343,18 @@ func TestNewVerifier(t *testing.T) {
 		{"auth..jack.farm", "https://id.auth..jack.farm", false},
 		{"", "https://", false},
 		{"-auth.jack.farm", "https://id.-auth.jack.farm", false},
+		// Trying it on a laptop.
+		{"localhost", "https://localhost", true},
+		{"localhost", "http://localhost:9300", true},
+		{"localhost", "http://localhost:1", true},
+		{"localhost", "http://localhost", false},
+		{"localhost", "http://localhost:0", false},
+		{"localhost", "http://localhost:65536", false},
+		{"localhost", "http://localhost:09300", false},
+		{"localhost", "http://localhost:+9300", false},
+		{"localhost", "http://localhost:9300/", false},
+		{"localhost", "http://127.0.0.1:9300", false},
+		{"auth.jack.farm", "http://localhost:9300", false},
 	} {
 		_, err := NewVerifier(tc.rpID, tc.origin)
 		if (err == nil) != tc.ok {
