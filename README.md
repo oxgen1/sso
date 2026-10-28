@@ -6,7 +6,11 @@ Single sign-on for the farm-1 homelab. It has four parts:
 - an auth proxy for web apps
 - a small shared library (`lib/`: `httpsig` and `cert`, a separate Go module) that clients use to sign requests and services use to verify them
 
-Nothing is implemented yet. See [docs/design.md](docs/design.md) and [TODO.md](TODO.md).
+Built so far: `lib/httpsig` and `lib/cert`. Progress is in [TODO.md](TODO.md).
+
+- [docs/setup.md](docs/setup.md): running the IdP, with two example deployments
+- [docs/integration.md](docs/integration.md): putting services, web apps and clients behind it
+- [docs/design.md](docs/design.md): the design and why
 
 statusd in `~/Dev/server-api` is the first consumer.
 
