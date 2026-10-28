@@ -10,7 +10,8 @@ Logging, rate limits and tests are part of every milestone, not a phase at the e
 ## 1. Library (`lib/`)
 
 - [x] `httpsig`: RFC 8941 subset parser, signature base, `content-digest`, sign and verify with the fixed profile, reason codes as a closed set, nonce cache. Tested against RFC 9421 B.2.4 and B.3 and RFC 9530 B.1 and B.2, with one mutation test per reason, a reason-coverage test, a golden base and four fuzzers.
-- [ ] `cert`: issue and verify X.509 client certificates (roles, services, passkey keys, source address).
+- [x] `cert`: issue and verify X.509 client certificates (roles, services, passkey keys, source address). `Verifier.Verify` is the `httpsig.Verifier` Cert func. 51 mutation cases, a reason-coverage test, an end-to-end test through `httpsig`, and two fuzzers (extension round trip, Verify).
+- [ ] Register an IANA Private Enterprise Number and replace the placeholder `2.999.7` arc in `lib/cert/ext.go` before tagging.
 - [ ] WebAuthn assertion check for the destructive tier (`authenticatorData`, `clientDataJSON`).
 - [ ] Tests:
   - RFC 9421 Appendix B ES256 vectors

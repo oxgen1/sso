@@ -57,9 +57,15 @@ The fixed profile. Anything outside it is rejected, so there's nothing to negoti
     - the client public key
     - `NotBefore` and `NotAfter`
     - ExtKeyUsage `ClientAuth`
-    - the services it's valid for, as URI SANs
-    - roles and the passkey public keys (as SPKI DER, converted from COSE by the IdP), as extensions under a private `2.25.<uuid>` OID, which needs no registration
-    - optionally, a source-address restriction
+    - the services it's valid for, as URI SANs `https://id.auth.jack.farm/services/<name>`, and nothing else in the SAN
+    - three private extensions, each left out when empty:
+      - roles: `SEQUENCE OF PrintableString`, sorted, not critical
+      - passkeys: `SEQUENCE OF SEQUENCE { credentialID OCTET STRING, publicKey SubjectPublicKeyInfo }`, the keys converted from COSE by the IdP, not critical
+      - source addresses: `SEQUENCE OF OCTET STRING`, each address‖mask as in RFC 5280 name constraints. Critical, because a verifier that ignored it would accept the certificate from anywhere; ignoring the other two only grants less.
+    - a 128-bit serial, which is the `keyid` as 32 hex digits
+  - The extensions need a private OID arc. The planned `2.25.<uuid>` arc can't work: `crypto/x509` parses extension OIDs into `[]int` and rejects any arc of 2³¹ or more, so a certificate carrying one doesn't parse at all. The arc will be an IANA Private Enterprise Number (`1.3.6.1.4.1.<PEN>`, free to register); until then the code uses `2.999.7`, from the arc reserved for examples.
+  - Only the profile `CA.Issue` produces is accepted: P-256 key, ECDSA-SHA256, a lone CN, `digitalSignature` and `clientAuth` only, not a CA, exactly the expected extensions, lifetime at most 8 h plus the 5-minute backdate. Each extension value is re-encoded and compared, so it has one accepted encoding. `Issue` runs the same check on its own output.
+  - Checked in this order: CA signature (`CheckSignatureFrom`, not `x509.Verify`, as there's no path to build), profile, `keyid` equals the serial, validity period, service, source address. The signature comes first so `cert_expired` and `scope` are only reported for certificates the CA issued.
   - Using X.509 avoids inventing a token format, whose canonicalization would be exactly where things go wrong. It also lets `openssl x509 -text` show any certificate during an audit.
 - **Lifetime:** 8 h, a working day. Revocation is expiry plus narrow scopes. CA rotation is the emergency stop.
 - **Component values:**
