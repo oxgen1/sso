@@ -18,8 +18,9 @@ Logging, rate limits and tests are part of every milestone, not a phase at the e
 ## 2. IdP
 
 - [ ] `cmd/sso`:
-  - WebAuthn sign-in with UV required
-  - SSO session
+  - [x] WebAuthn sign-in with UV required (`internal/idp`): discoverable credentials, one attempt per challenge, `Origin` checked on every POST, a rate limit per address on `begin`. 20 rejection cases through the HTTP handler with a software authenticator.
+  - [x] SSO session: `__Host-sso` cookie (HttpOnly, Secure, SameSite=Strict), 8 h absolute, replaced on a new sign-in, ended by sign-out. In-memory stores (`internal/store`) and token buckets (`internal/ratelimit`), both with size limits. `sso serve`.
+  - [ ] Try sign-in in a real browser once DNS and the certificate exist.
   - device flow (RFC 8628)
   - certificate issuance
   - `sso enroll`

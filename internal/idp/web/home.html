@@ -1,0 +1,9 @@
+{{define "home.html"}}{{template "head" "Signed in"}}
+<body>
+<main>
+<h1>Signed in</h1>
+<p>Signed in as <strong>{{.User}}</strong> with {{.Passkey}} until {{.Until}}.</p>
+<form method="post" action="/signout"><button type="submit">Sign out</button></form>
+</main>
+</body>
+</html>{{end}}

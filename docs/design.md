@@ -132,6 +132,16 @@ The signature counter is ignored. Synced passkeys report 0, and tracking the cou
 
 The approval page builds the summary it shows from the same signature base that it hashes, so you approve what you see.
 
+## Sign-in and the SSO session
+
+- The sign-in page asks for a WebAuthn get with `userVerification: "required"` and no `allowCredentials`: the browser offers the passkeys it holds for the RP ID, and the IdP finds the user from the credential ID. The assertion is checked by `lib/assertion` (`CheckChallenge`) with the same rules as approvals.
+- A challenge is 32 random bytes, held in memory for 3 minutes (the browser gives up after 2) and good for one attempt: it's removed before the assertion is looked at, so a failed try needs a new challenge.
+- The session is a random 128-bit token in a `__Host-sso` cookie: HttpOnly, Secure, SameSite=Strict, Path=/, no Domain. It lasts 8 h from sign-in and isn't extended by use. Signing in again replaces the browser's old session; signing out removes it from memory.
+- Every POST must carry `Origin` equal to the IdP's origin. Pages send `Referrer-Policy: same-origin` (with `no-referrer`, browsers send `Origin: null` on form posts) and a CSP that allows only the IdP's own script and style.
+- A redirect after sign-in (`next`) must be a path on the IdP itself.
+- The client address, for rate limits and the audit log, is the peer's, except from loopback (Caddy on the same host), where it's the last `X-Forwarded-For` entry. Caddy replaces that header for clients it doesn't trust as proxies, so the last entry is the address it saw.
+- The browser is told only that sign-in failed; the audit log has the reason (`lib/assertion`'s, or `login_challenge` for a challenge that's unknown, expired or used).
+
 ## Enrollment and recovery
 
 - Users, roles and passkey public keys are declared in the Nix configuration. Public keys aren't secret, so the IdP has no user database.

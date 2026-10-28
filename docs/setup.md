@@ -2,7 +2,7 @@
 
 How to run the SSO: the IdP, users and passkeys, and the first sign-in. Connecting services, web apps and clients is in [integration.md](integration.md); the reasoning behind all of it is in [design.md](design.md).
 
-> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init` and `sso config check`. Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
+> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init`, `sso config check`, passkey registration (no page yet), and `sso serve` with passkey sign-in and the SSO session. Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
 
 ## Pieces
 

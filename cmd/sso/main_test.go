@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/oxgen1/sso/internal/config"
 )
@@ -40,14 +44,7 @@ func TestCAInitThenCheck(t *testing.T) {
 		t.Error("second init changed ca.key")
 	}
 
-	cfg := filepath.Join(t.TempDir(), "sso.json")
-	json := `{"rpId":"auth.jack.farm","origin":"https://id.auth.jack.farm","listenAddress":"127.0.0.1:9300",
-		"caCertificate":"` + filepath.Join(dir, "ca.pem") + `",
-		"users":{"jack":{"roles":["write"],"services":["statusd"],"sources":[],"passkeys":[]}},
-		"clients":{},"audit":{"retentionDays":90}}`
-	if err := os.WriteFile(cfg, []byte(json), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	cfg := writeConfig(t, filepath.Join(dir, "ca.pem"), "127.0.0.1:9300")
 	out.Reset()
 	if err := run([]string{"config", "check", cfg}, &out); err != nil {
 		t.Fatal(err)
@@ -66,9 +63,64 @@ func TestCAInitThenCheck(t *testing.T) {
 }
 
 func TestUsage(t *testing.T) {
-	for _, args := range [][]string{nil, {"ca"}, {"serve"}, {"ca", "init"}, {"ca", "init", "--out", "x"}, {"config", "check"}} {
+	for _, args := range [][]string{nil, {"ca"}, {"serve"}, {"serve", "/nonexistent"}, {"ca", "init"}, {"ca", "init", "--out", "x"}, {"config", "check"}} {
 		if err := run(args, &bytes.Buffer{}); err == nil {
 			t.Errorf("%q: no error", args)
 		}
+	}
+}
+
+func writeConfig(t *testing.T, caPEM, listen string) string {
+	t.Helper()
+	cfg := filepath.Join(t.TempDir(), "sso.json")
+	json := `{"rpId":"auth.jack.farm","origin":"https://id.auth.jack.farm","listenAddress":"` + listen + `",
+		"caCertificate":"` + caPEM + `",
+		"users":{"jack":{"roles":["write"],"services":["statusd"],"sources":[],"passkeys":[]}},
+		"clients":{},"audit":{"retentionDays":90}}`
+	if err := os.WriteFile(cfg, []byte(json), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return cfg
+}
+
+func TestServe(t *testing.T) {
+	dir := t.TempDir()
+	if err := run([]string{"ca", "init", "--name", "test CA", "--out", dir}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	// A free port: there's a small window for something else to take it.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	cfg := writeConfig(t, filepath.Join(dir, "ca.pem"), addr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errc := make(chan error, 1)
+	var logs bytes.Buffer
+	go func() { errc <- serveUntil(ctx, []string{cfg}, &logs) }()
+
+	var resp *http.Response
+	for range 50 {
+		if resp, err = http.Get("http://" + addr + "/signin"); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET /signin: %s", resp.Status)
+	}
+	cancel()
+	if err := <-errc; err != nil {
+		t.Errorf("shutdown: %v", err)
+	}
+	if !strings.Contains(logs.String(), `"msg":"listening"`) {
+		t.Errorf("logs: %s", logs.String())
 	}
 }

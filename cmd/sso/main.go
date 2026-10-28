@@ -3,6 +3,7 @@
 //
 //	sso ca init --name NAME [--years N] --out DIR
 //	sso config check FILE
+//	sso serve FILE
 package main
 
 import (
@@ -15,6 +16,7 @@ import (
 const usage = `usage:
   sso ca init --name NAME [--years N] --out DIR
   sso config check FILE
+  sso serve FILE
 `
 
 func main() {
@@ -31,6 +33,9 @@ func run(args []string, out io.Writer) error {
 		return caInit(args[2:], out)
 	case "config check":
 		return configCheck(args[2:], out)
+	}
+	if len(args) > 0 && args[0] == "serve" {
+		return serve(args[1:])
 	}
 	return fmt.Errorf("unknown command %q\n%s", cmd, usage)
 }
