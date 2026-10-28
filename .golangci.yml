@@ -1,0 +1,38 @@
+version: "2"
+
+linters:
+  enable:
+    - depguard
+    - gosec
+  settings:
+    depguard:
+      rules:
+        # lib (httpsig, cert) is imported by statusd and the mvm CLI. Keeping them
+        # standard-library only keeps those programs' dependency count flat.
+        shared:
+          files:
+            - "**/lib/**"
+          list-mode: strict
+          allow:
+            - $gostd
+            - github.com/oxgen1/sso/lib
+        # The IdP, authenticator and proxy get no systemd or D-Bus access.
+        services:
+          files:
+            - "**/internal/**"
+            - "**/cmd/**"
+          deny:
+            - pkg: github.com/coreos/go-systemd
+              desc: the SSO gets no systemd access
+            - pkg: github.com/godbus/dbus
+              desc: the SSO gets no D-Bus access
+  exclusions:
+    # Unchecked Close/Flush on deferred cleanup.
+    presets:
+      - std-error-handling
+    rules:
+      # Tests write temp files with ordinary permissions; gosec still covers
+      # everything that ships.
+      - path: _test\.go
+        linters:
+          - gosec
