@@ -116,13 +116,17 @@ sequenceDiagram
   S->>S: Check the assertion against passkey keys in the certificate
 ```
 
-statusd checks the assertion:
-- `clientDataJSON.type` is `webauthn.get`
-- the challenge equals SHA-256 of the signature base statusd rebuilt
-- the origin is the IdP's origin
+The client sends it in one header, an RFC 8941 dictionary in the same canonical subset as the signature headers: `Sso-Assertion: id=:…:, ad=:…:, cd=:…:, sig=:…:` (credential ID, `authenticatorData`, `clientDataJSON`, DER signature; no user handle, since the certificate already names the user). The request signature doesn't cover this header and can't, as the assertion is made over the signature base. An assertion is only good for that one base, so nothing is lost.
+
+statusd checks the assertion (`lib/assertion`), signature first so the later reasons are only reported for assertions the passkey really made:
+- the credential ID is one of the passkeys in the certificate, and the signature verifies with its key
 - `rpIdHash` is SHA-256 of the RP ID
-- the UP and UV flags are set
-- the signature verifies with one of the passkey keys in the certificate
+- UP and UV are set; AT and ED are not, and `authenticatorData` is exactly 37 bytes (the page asks for no extensions)
+- `clientDataJSON` starts with exactly `{"type":"webauthn.get","challenge":"<base64url of SHA-256 of the signature base statusd rebuilt>","origin":"https://id.auth.jack.farm"` followed by `}` or `,`. This is WebAuthn's limited verification algorithm (§5.8.1.2): browsers serialize these three first and in this order, so they're compared as bytes and no JSON parser decides what they are. The rest is parsed only to refuse `crossOrigin: true` and `topOrigin`.
+
+Each failure has a reason from a second closed set, all prefixed `assertion_` so the audit log can't confuse them with signature reasons: `missing`, `malformed`, `credential`, `sig_mismatch`, `rp`, `flags`, `type`, `challenge`, `origin`.
+
+The approval has no timestamp of its own; it lives as long as the request's signature (`created` + 60 s, plus the skew allowance), and the nonce cache stops it being used twice.
 
 The signature counter is ignored. Synced passkeys report 0, and tracking the counter would mean storing state.
 

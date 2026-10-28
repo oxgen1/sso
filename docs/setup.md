@@ -2,7 +2,7 @@
 
 How to run the SSO: the IdP, users and passkeys, and the first sign-in. Connecting services, web apps and clients is in [integration.md](integration.md); the reasoning behind all of it is in [design.md](design.md).
 
-> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig` and `lib/cert`. Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
+> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert` and `lib/assertion`. Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
 
 ## Pieces
 
@@ -224,6 +224,13 @@ Services answer a rejected request with only the HTTP status. The reason is in t
 | `digest` | The body changed in transit | A proxy rewriting bodies |
 | `replay` | The same signed request seen twice | Expected if something retries blindly; otherwise investigate |
 | `nonce_full` | The nonce cache is full of live entries | Possible flood of valid writes; check the audit log for whose |
+| `role` | Signed fine, but the certificate lacks `write` (or `admin` for destructive) | Add the role to `users.<name>.roles` if intended |
+| `assertion_missing` | A destructive request without approval | Use `mvm req`, which asks for approval |
+| `assertion_challenge` | The passkey approved a different request | The approval page and the service built different bases, or an approval was reused |
+| `assertion_origin` | Approved somewhere other than `https://id.auth.jack.farm` | Investigate: some other page asked for a passkey |
+| `assertion_flags` | No user verification (PIN or biometric) | Set a PIN on the authenticator |
+| `assertion_credential` | The passkey isn't in the certificate | Enrolled after this certificate was issued: `mvm login` |
+| `assertion_rp`, `assertion_type`, `assertion_sig_mismatch`, `assertion_malformed` | Not an approval from our page | Investigate |
 
 For a `sig_mismatch` you can't explain, turn on the service's debug flag to log full signature bases, then replay one offline with `mvm verify base.txt`.
 

@@ -40,6 +40,9 @@ type Verifier[C any] struct {
 type Verified[C any] struct {
 	Params Params
 	Cert   C
+	// Base is the signature base. A destructive request's passkey assertion
+	// is over its SHA-256 (see the assertion package).
+	Base []byte
 }
 
 // parsed holds the signature headers of a request, checked against the
@@ -95,7 +98,7 @@ func (v *Verifier[C]) Verify(r *http.Request, body []byte) (*Verified[C], error)
 			return nil, err
 		}
 	}
-	return &Verified[C]{Params: p, Cert: cert}, nil
+	return &Verified[C]{Params: p, Cert: cert, Base: m.base}, nil
 }
 
 func (v *Verifier[C]) checkWindow(p Params, now time.Time) *Error {

@@ -2,7 +2,7 @@
 
 How to put a service, a web app or a client behind the SSO. Running the IdP itself is in [setup.md](setup.md).
 
-> **Status:** written ahead of the code, as the finished system should work. The Go examples use the real API of `lib/httpsig` and `lib/cert`, which exist; `lib/assertion`, the Nix options, `sso-proxy` and `mvm` are still to be built.
+> **Status:** written ahead of the code, as the finished system should work. The Go examples use the real API of `lib/httpsig`, `lib/cert` and `lib/assertion`, which exist; the Nix options, `sso-proxy` and `mvm` are still to be built.
 
 There are three ways in:
 
@@ -103,8 +103,8 @@ func (a *Auth) handle(tier Tier, next http.HandlerFunc) http.Handler {
 			w.WriteHeader(http.StatusForbidden)
 			return
 		case tier == Destructive:
-			if err := a.assertion.Verify(r, got, c); err != nil {
-				a.deny(r, tier, "assertion", err)
+			if err := a.assertion.Verify(r, got); err != nil {
+				a.deny(r, tier, assertion.ReasonOf(err), err)
 				w.WriteHeader(http.StatusForbidden)
 				return
 			}
@@ -123,13 +123,18 @@ Send the client nothing but the status. The reason goes to the audit log, the er
 A destructive request carries, as well as its signature, a passkey assertion whose challenge is SHA-256 of the request's signature base. `mvm` and web apps get it from the IdP's approval page (see [Clients](#destructive-actions)). The service checks it with `lib/assertion` against the passkey keys in the certificate:
 
 ```go
-a.assertion = &assertion.Verifier{
-	RPID:   "auth.jack.farm",
-	Origin: "https://id.auth.jack.farm",
-}
+a.assertion, err = assertion.NewVerifier("auth.jack.farm", "https://id.auth.jack.farm")
 ```
 
-It checks the `webauthn.get` type, the challenge against the signature base this side rebuilt, the origin, the RP ID hash, the user-present and user-verified flags, and the signature with the passkey the credential ID names. Nothing is stored: the signature counter is ignored, and the request's own nonce stops a replay.
+The assertion arrives in one header, which the request signature doesn't cover (it can't: the assertion is made over the signature base):
+
+```
+Sso-Assertion: id=:<credential ID>:, ad=:<authenticatorData>:, cd=:<clientDataJSON>:, sig=:<DER signature>:
+```
+
+`Verify` finds the passkey by credential ID among the certificate's, checks its signature, then the RP ID hash, the user-present and user-verified flags, and that `clientDataJSON` starts with exactly `{"type":"webauthn.get","challenge":"<SHA-256 of the base>","origin":"https://id.auth.jack.farm"`, not cross-origin. Nothing is stored: the signature counter is ignored, and the request's own nonce stops a replay. Its reasons all start with `assertion_` (see [setup.md](setup.md#reading-a-rejection)).
+
+The approval has to finish before the request's signature expires: `created` + 60 s, plus the 5-minute skew allowance. After that, sign and approve again.
 
 ### Testing a service
 

@@ -4,9 +4,9 @@ Single sign-on for the farm-1 homelab. It has four parts:
 - a passkey authenticator
 - an IdP that issues short-lived client certificates
 - an auth proxy for web apps
-- a small shared library (`lib/`: `httpsig` and `cert`, a separate Go module) that clients use to sign requests and services use to verify them
+- a small shared library (`lib/`: `httpsig`, `cert` and `assertion`, a separate Go module) that clients use to sign requests and services use to verify them
 
-Built so far: `lib/httpsig` and `lib/cert`. Progress is in [TODO.md](TODO.md).
+Built so far: the whole of `lib` (`httpsig`, `cert`, `assertion`); it waits only on the IANA PEN to be tagged. Progress is in [TODO.md](TODO.md).
 
 - [docs/setup.md](docs/setup.md): running the IdP, with two example deployments
 - [docs/integration.md](docs/integration.md): putting services, web apps and clients behind it
