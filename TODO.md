@@ -23,7 +23,8 @@ Logging, rate limits and tests are part of every milestone, not a phase at the e
   - device flow (RFC 8628)
   - certificate issuance
   - `sso enroll`
-- [ ] Users, roles and passkey keys read from Nix-generated configuration; CA key from `LoadCredential`.
+- [x] `internal/config`: users, roles, passkey keys and clients from the JSON the Nix module writes, all checked at load (each user's claims through `cert.Claims.Check`, credential IDs unique across users); CA key (PKCS #8) from `LoadCredential`. `sso ca init` and `sso config check` (for a build-time check in the module).
+- [x] `internal/webauthn`: registration (attestation `none`, ES256 only) with strict CBOR; tested against the WebAuthn L3 §16.2 vector, 30 mutation cases and a fuzzer. `lib/assertion` gained `CheckChallenge` (sign-in) and `CheckClientData` (shared with registration).
 - [ ] Audit log with a hash chain; diagnostic log; rate limits.
 
 ## 3. statusd and mvm

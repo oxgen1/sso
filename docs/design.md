@@ -136,6 +136,7 @@ The approval page builds the summary it shows from the same signature base that 
 
 - Users, roles and passkey public keys are declared in the Nix configuration. Public keys aren't secret, so the IdP has no user database.
 - `sso enroll <user>`, run on the IdP host, prints a one-time enrollment link that lasts 10 minutes. Registering a passkey there prints the Nix snippet to paste into the configuration.
+- Registration asks for attestation `none` and accepts only that: an ES256 key on P-256, UP and UV set, no extensions, and `clientDataJSON` checked with the same limited verification as approvals (type `webauthn.create`). With no attestation nothing is signed, so what ties the key to the enrollment is the challenge, which only the holder of the link has. The attestation object is the only CBOR in the system; `internal/webauthn` decodes it with `fxamacker/cbor` in a strict mode (no duplicate keys, indefinite lengths, tags or unknown fields).
 - For recovery, enroll at least two authenticators (two YubiKeys, or a YubiKey plus a passkey). There is no TOTP or email fallback.
 
 ## Transport, names and clocks
