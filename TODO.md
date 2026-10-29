@@ -25,6 +25,7 @@ Logging, rate limits and tests are part of every milestone, not a phase at the e
   - [x] `sso enroll` and its page: an HMAC link (key derived from the CA key), single use, the snippet on the page and in the audit log. RP ID `localhost` with `http://localhost:PORT` for trying it on a laptop.
 - [x] `internal/config`: users, roles, passkey keys and clients from the JSON the Nix module writes, all checked at load (each user's claims through `cert.Claims.Check`, credential IDs unique across users); CA key (PKCS #8) from `LoadCredential`. `sso ca init` and `sso config check` (for a build-time check in the module).
 - [x] `internal/webauthn`: registration (attestation `none`, ES256 only) with strict CBOR; tested against the WebAuthn L3 §16.2 vector, 30 mutation cases and a fuzzer. `lib/assertion` gained `CheckChallenge` (sign-in) and `CheckClientData` (shared with registration).
+- [x] End to end without farm (`internal/idp/e2e_test.go`): a key and CSR, the device flow with a passkey, then signed writes over a real connection to a stand-in service that trusts only the CA. Rejects a replay, another service, another CA, another key, another authority, and an expired certificate; logging in again works.
 - [x] Audit log with a hash chain (`internal/audit`): one chain per run from `audit_start` to `audit_stop`, `sso audit verify` for `journalctl -o cat` output. Every IdP test checks the chain it leaves. Diagnostic log and rate limits are in place.
 
 ## 3. Nix and deployment
