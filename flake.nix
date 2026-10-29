@@ -9,6 +9,44 @@
       pkgs = nixpkgs.legacyPackages.${system};
     in
     {
+      packages.${system} = {
+        sso = pkgs.buildGoModule {
+          pname = "sso";
+          version = "0.1.0";
+          src = self;
+          # Update after changing go.mod: set to lib.fakeHash, build, copy the "got:" hash.
+          vendorHash = "sha256-Fdy4oEVrTvMdKHMsWTAodSrTQtigovFPOMbpomkZVO4=";
+          subPackages = [ "cmd/sso" ];
+          env.CGO_ENABLED = 0;
+          ldflags = [ "-s" "-w" ];
+          # The default checkPhase only tests subPackages. Run every test, lib's
+          # module too, so a failure breaks the build.
+          checkPhase = ''
+            runHook preCheck
+            go test ./...
+            (cd lib && go test ./...)
+            runHook postCheck
+          '';
+          meta.mainProgram = "sso";
+        };
+        default = self.packages.${system}.sso;
+      };
+
+      nixosModules.sso = { lib, pkgs, ... }: {
+        imports = [ ./nix/module.nix ];
+        services.sso.package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.sso;
+      };
+
+      checks.${system} = {
+        # Go unit tests (run in the package's checkPhase).
+        unit = self.packages.${system}.sso;
+        sso = import ./nix/test.nix {
+          inherit pkgs;
+          module = self.nixosModules.sso;
+          package = self.packages.${system}.sso;
+        };
+      };
+
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [
           go

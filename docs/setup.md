@@ -2,7 +2,7 @@
 
 How to run the SSO: the IdP, users and passkeys, and the first sign-in. Connecting services, web apps and clients is in [integration.md](integration.md); the reasoning behind all of it is in [design.md](design.md).
 
-> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init`, `sso config check`, `sso serve` with passkey sign-in, the SSO session, the device flow that issues certificates (no `farm login` yet) and a hash-chained audit log, `sso enroll` with its page, and `sso audit verify`. To try it on a laptop, see [Try it locally](#try-it-locally). Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
+> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init`, `sso config check`, `sso serve` with passkey sign-in, the SSO session, the device flow that issues certificates (no `farm login` yet) and a hash-chained audit log, `sso enroll` with its page, `sso audit verify`, and the Nix package and module (`nixosModules.sso`). To try it on a laptop, see [Try it locally](#try-it-locally). Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
 
 ## Pieces
 
@@ -150,7 +150,8 @@ The web-app side (Caddy and `sso-proxy` on `farm-1`) is in [integration.md](inte
 |---|---|
 | `rpId` | The WebAuthn RP ID. Every passkey is bound to it for good: changing it means re-enrolling everyone. |
 | `origin` | The exact origin of the IdP. Services check passkey assertions against it. |
-| `caCertificate`, `caKeyFile` | The CA pair from `sso ca init`. The key is read through `LoadCredential`. |
+| `listenAddress` | Loopback address and port, default `127.0.0.1:9300`. The reverse proxy in front terminates TLS and has to be on the same host: the IdP trusts `X-Forwarded-For` only from loopback. |
+| `caCertificate`, `caKeyFile` | The CA pair from `sso ca init`. `caKeyFile` is a string path outside the Nix store (from agenix or sops-nix), read through `LoadCredential`. |
 | `users.<name>.roles` | Sorted into the certificate. `write` allows writes; `admin` plus a passkey touch allows destructive actions. Roles apply to every service in `services`. |
 | `users.<name>.services` | The services the certificate is valid for. A service rejects any certificate that doesn't name it (`scope`). |
 | `users.<name>.sources` | Optional CIDR prefixes. If set, services reject the certificate from any other address (`scope`). |
