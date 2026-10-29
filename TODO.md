@@ -3,7 +3,7 @@
 Design: [docs/design.md](docs/design.md).
 
 - [ ] Create the public GitHub repo `oxgen1/sso` and push.
-- [ ] Before milestone 2: a DNS-01 wildcard certificate for `*.auth.jack.farm`, and DNS for `id.auth.jack.farm` (LAN and WireGuard).
+- [ ] Before deploying (milestone 3): a DNS-01 wildcard certificate for `*.auth.jack.farm`, and DNS for `id.auth.jack.farm` (LAN and WireGuard).
 
 Logging, rate limits and tests are part of every milestone, not a phase at the end.
 
@@ -27,25 +27,28 @@ Logging, rate limits and tests are part of every milestone, not a phase at the e
 - [x] `internal/webauthn`: registration (attestation `none`, ES256 only) with strict CBOR; tested against the WebAuthn L3 §16.2 vector, 30 mutation cases and a fuzzer. `lib/assertion` gained `CheckChallenge` (sign-in) and `CheckClientData` (shared with registration).
 - [x] Audit log with a hash chain (`internal/audit`): one chain per run from `audit_start` to `audit_stop`, `sso audit verify` for `journalctl -o cat` output. Every IdP test checks the chain it leaves. Diagnostic log and rate limits are in place.
 
-## 3. statusd and farm
-
-- [ ] `farm` in its own repo (~/Dev/farm, Go, importing only `lib`): remote status and light management for microvms and slimdeploy previews. `farm login`, `farm req`, and `farm verify` (replays a logged signature base). `mvm`, the Rust tool on the host, is unrelated and stays local.
-- [ ] statusd `internal/auth` middleware and route tiers (tracked in server-api's TODO.md).
-
-## 4. Destructive tier
-
-- [ ] IdP approval page that shows the action and runs WebAuthn get over the signature-base hash.
-- [ ] Assertion headers from farm and web apps; checked in statusd.
-
-## 5. Proxy
-
-- [ ] `cmd/sso-proxy`: `forward_auth`, code exchange, cookie sessions, Origin check.
-
-## 6. Nix
+## 3. Nix and deployment
 
 - [ ] `packages.sso`, `nixosModules.sso`, hardened units (as with statusd). A wrapper that passes the configuration and the CA key, so `sudo sso enroll jack` works as setup.md says.
 - [ ] NixOS VM test: software authenticator, end-to-end flows, interop check of signatures against an independent RFC 9421 implementation.
 - [ ] Deploy on its own VM over WireGuard; NTP on every host.
+
+## 4. OIDC and the proxy
+
+- [ ] IdP as a minimal OIDC provider (design: Browser apps): code flow with PKCE, discovery, JWKS, ES256 ID token with `auth_time`, `/userinfo` with a 5-minute access token, clients and secrets from the configuration, its own ID-token key. Interop test with a maintained client library.
+- [ ] A CSR with the token request returns a certificate (`not_before` = `auth_time`), for app servers that call APIs as the user.
+- [ ] `cmd/sso-proxy` as an OIDC client: `forward_auth`, cookie sessions ending at `auth_time + 8h`, Origin check, `state` and `nonce`.
+- [ ] Later, when an app needs it: `max_age` and `prompt=login`, for a middle tier; an RS256 ID-token key.
+
+## 5. statusd and farm
+
+- [ ] `farm` in its own repo (~/Dev/farm, Go, importing only `lib`): remote status and light management for microvms and slimdeploy previews. `farm login`, `farm req`, and `farm verify` (replays a logged signature base). `mvm`, the Rust tool on the host, is unrelated and stays local.
+- [ ] statusd `internal/auth` middleware and route tiers (tracked in server-api's TODO.md).
+
+## 6. Destructive tier
+
+- [ ] IdP approval page that shows the action and runs WebAuthn get over the signature-base hash.
+- [ ] Assertion headers from farm and web apps; checked in statusd.
 
 ## Later
 

@@ -13,6 +13,20 @@ The goal is practice in applied cryptography on an established design (AWS reque
 5. Auditable, with logs that are complete but not noisy.
 6. Simple to use day to day.
 
+## Browsers and programs
+
+Browsers sign in with OIDC; programs sign their requests.
+
+| Who | How | Credential |
+|---|---|---|
+| Browser → app | OIDC: the app, or `sso-proxy` in front of it, signs the user in through the IdP | The app's HttpOnly session cookie |
+| Program → API (`farm`, an app's server, service to service) | RFC 9421 signed requests | An 8 h certificate and a private key the program holds |
+| Destructive action, either way | A passkey touch on the IdP's approval page, bound to that exact request | A WebAuthn assertion, on top of the signature |
+
+- Browser JavaScript never calls an API directly. It calls its own app's server, which signs the request onward (backend for frontend). The browser holds a cookie, never a key or a token.
+- An app's server that calls APIs as the user gets a certificate by sending a CSR with the OIDC token request (see [Browser apps](#browser-apps-oidc)).
+- No API accepts a bearer token. The only one is the OIDC access token, and it works only at `/userinfo`.
+
 ## Threat model
 
 | In scope | Answer |
@@ -23,6 +37,8 @@ The goal is practice in applied cryptography on an established design (AWS reque
 | XSS in a web app | Cookies are HttpOnly and there are no tokens JS can read. XSS can still do ordinary writes while the page is open, an accepted risk. Destructive actions need a passkey touch. |
 | Stolen laptop or key file | The attacker can do reads and ordinary writes until the certificate expires (at most 8 h). Destructive actions need the passkey. |
 | Replay | A ±5 min window on `created`, a nonce cache on write routes, and services reject signatures created before they started. |
+| Stolen ID token or access token | No API accepts either. The access token works only at `/userinfo`, for 5 minutes. |
+| CSRF on a browser app | SameSite=Strict cookies, and an exact `Origin` check on every non-GET (sibling `*.jack.farm` hosts are same-site, so SameSite alone isn't enough). Apps never change state on GET. |
 
 Out of scope:
 - **Compromise of the IdP host.** The CA key lives there. Mitigations are hardening, a narrow sandbox, and CA rotation as the emergency stop.
@@ -33,8 +49,8 @@ Out of scope:
 | Piece | Job | Where |
 |---|---|---|
 | Authenticator | WebAuthn sign-in with user verification required. | `cmd/sso`, own package |
-| IdP and CA | SSO session, device flow, issues client certificates, destructive-action approval page. | `cmd/sso` |
-| Auth proxy | Caddy `forward_auth` endpoint, HttpOnly SameSite=Strict cookie sessions. | `cmd/sso-proxy` |
+| IdP and CA | SSO session, OIDC provider, device flow, issues client certificates, destructive-action approval page. | `cmd/sso` |
+| Auth proxy | An OIDC client in front of apps that don't sign users in themselves: Caddy `forward_auth` endpoint, HttpOnly SameSite=Strict cookie sessions. | `cmd/sso-proxy` |
 | Shared library | Signs and verifies requests (`httpsig`), issues and verifies certificates (`cert`), verifies destructive-action assertions. Standard library only. | `lib/`, its own Go module |
 | `farm` | Remote status and light management for microvms and slimdeploy previews, and the first real client of the SSO: `farm login` (device flow), `farm req` (signed requests). Not `mvm`, which stays the fast management tool on the host. | `github.com/oxgen1/farm` (~/Dev/farm) |
 
@@ -45,6 +61,7 @@ The fixed profile. Anything outside it is rejected, so there's nothing to negoti
 - **Algorithm:** ES256 (`ecdsa-p256-sha256` in RFC 9421) everywhere: client keys, the CA, and passkeys.
   - Every FIDO2 authenticator supports it, and Go's standard library implements it.
   - One algorithm for everything removes a whole class of key-confusion bugs.
+  - OIDC ID tokens are ES256 too. OIDC Discovery asks providers to offer RS256; an RS256 ID-token key is added only if an app we want can't take ES256.
 - **Request signatures:** RFC 9421, with a single label `sig1`.
   - Covered components, in this order and no others: `"@method" "@authority" "@path" "@query" "content-digest" "sso-cert"`. `content-digest` is SHA-256 (RFC 9530) and is present even for an empty body.
   - Required parameters: `created`, `expires` (at most `created` + 300), `nonce`, `keyid` (the certificate serial), and `tag="farm1-sso-v1"`.
@@ -132,6 +149,18 @@ The signature counter is ignored. Synced passkeys report 0, and tracking the cou
 
 The approval page builds the summary it shows from the same signature base that it hashes, so you approve what you see.
 
+### Freshness
+
+Freshness is the time since the user last touched a passkey, `auth_time`. It's a fixed time, not a risk score: easy to test and to explain in the audit log.
+
+- An SSO session's `auth_time` is its sign-in. A certificate's is the device approval, so its `not_before`.
+- Nothing extends past `auth_time + 8h`: not the SSO session, not a certificate, and not a proxy session. Use never extends anything.
+- The ID token carries `auth_time`. A proxy or app session ends at `auth_time + 8h`, not 8 h after the token request, so opening an app late in the day can't stretch a sign-in to nearly 16 h. Third-party apps keep their own session rules (see [Browser apps](#browser-apps-oidc)).
+- **`max_age` (planned, for a middle tier):** an app can send `max_age=N` to `/authorize`, and the IdP asks for a passkey unless `auth_time` is within N seconds. `prompt=login` always asks.
+  - This allows a tier between write and destructive, such as "writes here need a touch in the last hour", without a touch for each action.
+  - The proxy enforces it for each route, and for signed requests a service compares the certificate's `not_before` with its own `max_age`.
+  - Only build it when an app needs it: the destructive tier already covers the dangerous actions.
+
 ## Sign-in and the SSO session
 
 - The sign-in page asks for a WebAuthn get with `userVerification: "required"` and no `allowCredentials`: the browser offers the passkeys it holds for the RP ID, and the IdP finds the user from the credential ID. The assertion is checked by `lib/assertion` (`CheckChallenge`) with the same rules as approvals.
@@ -141,6 +170,24 @@ The approval page builds the summary it shows from the same signature base that 
 - A redirect after sign-in (`next`) must be a path on the IdP itself.
 - The client address, for rate limits and the audit log, is the peer's, except from loopback (Caddy on the same host), where it's the last `X-Forwarded-For` entry. Caddy replaces that header for clients it doesn't trust as proxies, so the last entry is the address it saw.
 - The browser is told only that sign-in failed; the audit log has the reason (`lib/assertion`'s, or `login_challenge` for a challenge that's unknown, expired, used, or issued for a device approval).
+
+## Browser apps: OIDC
+
+The IdP is an OpenID Connect provider, kept to the minimum that real clients need, so our own apps, `sso-proxy` and off-the-shelf apps (Grafana, Forgejo, Immich and the like) all sign in the same way with maintained client libraries.
+
+- **Implemented:**
+  - The authorization code flow, with PKCE required for public clients and checked whenever it's sent.
+  - Discovery (`/.well-known/openid-configuration`) and JWKS.
+  - An ES256 ID token with `sub`, `auth_time`, `nonce` and `groups` (the user's roles), plus `email` and `preferred_username` when the configuration has them.
+  - `/userinfo`, with an access token that lasts 5 minutes and is accepted nowhere else.
+  - `max_age` and `prompt=login` (see [Freshness](#freshness)).
+- **Left out:** the implicit and hybrid flows, dynamic client registration, and refresh tokens (sessions end at `auth_time + 8h` anyway).
+- **Clients** are declared in the Nix configuration: `client_id`, exact redirect URIs, and the service whose `services` entry a user needs to be let in. Confidential clients authenticate with `client_secret_basic` or `client_secret_post`; secrets come from `LoadCredential`, like the CA key.
+- **Authorization codes** are single use, last 60 s, and are held in memory. `/authorize` uses the SSO session if there is one, so signing in to a second app needs no touch.
+- **ID-token key:** its own ES256 key, separate from the CA key, from `LoadCredential`. JWKS can list two keys while it rotates.
+- **A certificate with sign-in:** an app's server that calls APIs as the user sends a CSR with the token request and gets a certificate back next to the ID token. It's issued like a device-flow certificate, with `not_before` at `auth_time` and expiring at `auth_time + 8h`. This is our only extension to OIDC.
+- **Our apps and `sso-proxy`** follow the session rules: a `__Host-` HttpOnly, Secure, SameSite=Strict cookie that ends at `auth_time + 8h`, an exact `Origin` check on every non-GET, `state` and `nonce` checked on the callback, no state changes on GET, and destructive actions sent to the IdP's approval page.
+- **Third-party apps** run their own sessions and their own CSRF protection after login. For them the IdP answers "who is this, and may they use this app"; freshness and the destructive tier don't reach inside. An app that has to follow our rules goes behind `sso-proxy`.
 
 ## Device flow and certificates
 
@@ -200,7 +247,8 @@ The CA key is read at start-up from `ca.key` in `$CREDENTIALS_DIRECTORY`, where 
 | Users, roles, passkey public keys | Nix configuration | Declarative, so nothing is lost |
 | CA private key | IdP, systemd `LoadCredential`, never in the Nix store | Rotate the CA, and everyone signs in again |
 | CA public key | A Nix option on each service | Declarative |
-| SSO sessions, pending challenges, device codes | IdP memory, with size limits and TTLs | Users sign in again |
+| SSO sessions, pending challenges, device codes, OIDC codes and access tokens | IdP memory, with size limits and TTLs | Users sign in again |
+| ID-token key, OIDC client secrets | IdP, systemd `LoadCredential` | A new ID-token key: apps fetch JWKS again. A new client secret: update that app |
 | Proxy sessions | Proxy memory | Silent re-login through the SSO session |
 | Nonce cache | Each service's memory, with a size limit | No replay risk, because services reject signatures created before they started. If the cache fills up, writes are rejected. |
 | Rate-limit buckets | Memory | Reset |
@@ -257,6 +305,7 @@ The CA key is read at start-up from `ca.key` in `$CREDENTIALS_DIRECTORY`, where 
 - **The repo is public.**
 - **Certificates last 8 h.**
 - **Remote writes go over WireGuard only.** TLS on statusd comes later, if at all.
+- **Browsers use OIDC; programs use signed requests.** The IdP is a minimal OIDC provider (ES256 first, RS256 only if an app needs it); no API accepts a bearer token.
 - **`jack.farm` is ours.** `0-0.biz` (also ours) might join later; that's out of scope.
   - Passkeys stay on `auth.jack.farm`, because apps on another domain redirect to `id.auth.jack.farm` to sign in, like any other app.
   - Such apps would need their own proxy cookie domain.
