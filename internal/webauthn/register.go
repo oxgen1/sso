@@ -3,8 +3,10 @@
 // Sign-in and approvals are assertions, which lib/assertion checks with the
 // standard library alone. Registration is the one place CBOR appears: the
 // attestation object and the COSE key inside it. Only what the enrollment
-// page asks for is accepted: attestation "none", an ES256 key, user
-// verification, and no extensions.
+// page asks for is accepted: attestation "none", an ES256 key and user
+// verification. The page asks for no extensions, but extension outputs it
+// didn't ask for are ignored, as WebAuthn allows: a security key reports
+// credProtect, which the browser requests for discoverable passkeys.
 package webauthn
 
 import (
@@ -119,13 +121,12 @@ func (rp *RP) parseAuthData(ad []byte) (cert.Passkey, error) {
 	if !bytes.Equal(ad[:32], rp.rpIDHash[:]) {
 		return cert.Passkey{}, errors.New("rpIdHash isn't this RP's")
 	}
-	switch flags := ad[32]; {
+	flags := ad[32]
+	switch {
 	case flags&flagUP == 0, flags&flagUV == 0:
 		return cert.Passkey{}, fmt.Errorf("flags %#02x: user not present or not verified", flags)
 	case flags&flagAT == 0:
 		return cert.Passkey{}, fmt.Errorf("flags %#02x: no attested credential data", flags)
-	case flags&flagED != 0:
-		return cert.Passkey{}, fmt.Errorf("flags %#02x: extensions", flags)
 	}
 	rest := ad[authDataHead+16:] // the AAGUID says which model; we don't ask
 	n := int(binary.BigEndian.Uint16(rest))
@@ -139,8 +140,15 @@ func (rp *RP) parseAuthData(ad []byte) (cert.Passkey, error) {
 	if err != nil {
 		return cert.Passkey{}, fmt.Errorf("credential public key: %w", err)
 	}
+	if flags&flagED != 0 {
+		// Ignored, but it has to be one well-formed map of extension outputs.
+		var ext map[string]cbor.RawMessage
+		if rest, err = decMode.UnmarshalFirst(rest, &ext); err != nil {
+			return cert.Passkey{}, fmt.Errorf("flags %#02x: extensions: %w", flags, err)
+		}
+	}
 	if len(rest) > 0 {
-		return cert.Passkey{}, fmt.Errorf("%d bytes after the credential public key", len(rest))
+		return cert.Passkey{}, fmt.Errorf("%d bytes after the credential public key and extensions", len(rest))
 	}
 	key, err := k.ecdsa()
 	if err != nil {

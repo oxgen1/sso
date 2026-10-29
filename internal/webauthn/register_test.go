@@ -208,6 +208,16 @@ func TestRegister(t *testing.T) {
 		t.Fatalf("got %x %v", p.ID, p.Key)
 	}
 
+	// A security key's unrequested credProtect output (flags 0xc5) is
+	// ignored.
+	r := auth.registration()
+	r.flags |= flagED
+	r.adTail = credProtect
+	attObj, cd = r.encode(t)
+	if p, err := rp.Register(attObj, cd, testChallenge); err != nil || !p.Key.Equal(&auth.key.PublicKey) {
+		t.Errorf("with credProtect (flags %#x): %v", r.flags, err)
+	}
+
 	// The passkey signs in through lib/assertion, as the IdP will use it.
 	v, err := assertion.NewVerifier(testRPID, testOrigin)
 	if err != nil {
@@ -228,6 +238,10 @@ func TestRegister(t *testing.T) {
 		t.Errorf("sign-in with the registered passkey: %v", err)
 	}
 }
+
+// credProtect is the extension output a security key such as a YubiKey adds
+// to a discoverable passkey, as {"credProtect": 2}.
+var credProtect = unhex("a16b6372656450726f7465637402")
 
 type mutation struct {
 	name   string
@@ -253,8 +267,14 @@ func mutations(t testing.TB) []mutation {
 		{"no UP", func(r *registration) { r.flags &^= flagUP }, "not present"},
 		{"no UV", func(r *registration) { r.flags &^= flagUV }, "not verified"},
 		{"no AT", func(r *registration) { r.flags &^= flagAT }, "no attested"},
-		{"ED", func(r *registration) { r.flags |= flagED }, "extensions"},
-		{"extension data", func(r *registration) { r.adTail = []byte{0xa0} }, "1 bytes after"},
+		{"ED without extensions", func(r *registration) { r.flags |= flagED }, "extensions"},
+		{"extensions not a map", func(r *registration) { r.flags |= flagED; r.adTail = []byte{0x02} }, "extensions"},
+		{"extensions with an integer key", func(r *registration) { r.flags |= flagED; r.adTail = unhex("a10102") }, "extensions"},
+		{"extensions without ED", func(r *registration) { r.adTail = credProtect }, "14 bytes after"},
+		{"bytes after extensions", func(r *registration) {
+			r.flags |= flagED
+			r.adTail = append(bytes.Clone(credProtect), 0)
+		}, "1 bytes after"},
 		{"empty credential ID", func(r *registration) { r.credID = nil }, "credential ID length 0"},
 		{"long credential ID", func(r *registration) { r.credID = make([]byte, 1024) }, "credential ID length 1024"},
 		{"credential ID past end", func(r *registration) { r.idLen = 1000 }, "credential ID length 1000"},
@@ -332,7 +352,7 @@ func FuzzParseAuthData(f *testing.F) {
 		switch {
 		case !bytes.Equal(ad[:32], rpHash[:]):
 			t.Fatal("accepted another RP")
-		case ad[32]&(flagUP|flagUV|flagAT|flagED) != flagUP|flagUV|flagAT:
+		case ad[32]&(flagUP|flagUV|flagAT) != flagUP|flagUV|flagAT:
 			t.Fatalf("accepted flags %#x", ad[32])
 		case !bytes.Equal(p.ID, ad[authDataHead+attestedHead:][:n]):
 			t.Fatal("ID isn't the one in the data")
