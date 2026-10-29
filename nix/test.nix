@@ -1,35 +1,48 @@
-# NixOS VM test for nixosModules.sso: the hardened unit starts with the CA key
-# from LoadCredential, answers the device flow, the enroll wrapper works for
-# root only, and the audit chain of the run verifies. No browser: passkeys
-# are covered by the Go tests.
+# NixOS VM test for nixosModules.sso: the hardened unit starts, makes its CA
+# at first boot (or takes a given one through LoadCredential), answers the
+# device flow, the enroll wrapper works for root only, and the audit chain of
+# the run verifies. No browser: passkeys are covered by the Go tests.
 # Run with: nix build .#checks.x86_64-linux.sso -L
 { pkgs, module, package }:
 
 let
-  # A throwaway CA. Its key is in the Nix store, which is fine for a test.
+  # A CA made ahead, as with a secrets tool. Its key is in the Nix store,
+  # which is fine for a test.
   ca = pkgs.runCommand "sso-test-ca" { } ''
     ${package}/bin/sso ca init --name "test CA" --years 1 --out $out
   '';
-in
-pkgs.testers.runNixOSTest {
-  name = "sso";
 
-  nodes.machine = {
+  common = {
     imports = [ module ];
-
     services.sso = {
       enable = true;
       rpId = "auth.jack.farm";
       origin = "https://id.auth.jack.farm";
-      caCertificate = "${ca}/ca.pem";
-      caKeyFile = "/run/keys/sso-ca.key";
       users.jack = {
         roles = [ "write" ];
         services = [ "statusd" ];
       };
     };
+    users.users.member.isNormalUser = true;
+    environment.systemPackages = [ pkgs.openssl ];
+  };
+in
+pkgs.testers.runNixOSTest {
+  name = "sso";
 
-    # Where a secrets tool would put the key: root-only, outside the store.
+  # The CA is made at first boot.
+  nodes.machine = {
+    imports = [ common ];
+    services.sso.generatedCA.name = "farm1 SSO CA";
+  };
+
+  # The CA is given, from where a secrets tool would put the key.
+  nodes.given = {
+    imports = [ common ];
+    services.sso = {
+      caCertificate = "${ca}/ca.pem";
+      caKeyFile = "/run/keys/sso-ca.key";
+    };
     systemd.tmpfiles.rules = [
       "d /run/keys 0750 root root -"
       "C /run/keys/sso-ca.key 0400 root root - ${ca}/ca.key"
@@ -38,16 +51,25 @@ pkgs.testers.runNixOSTest {
       after = [ "systemd-tmpfiles-setup.service" ];
       requires = [ "systemd-tmpfiles-setup.service" ];
     };
-
-    users.users.member.isNormalUser = true;
-    environment.systemPackages = [ pkgs.openssl ];
   };
 
   testScript = ''
     import json
 
-    machine.wait_for_unit("sso.service")
-    machine.wait_for_open_port(9300)
+    start_all()
+    for m in (machine, given):
+        m.wait_for_unit("sso.service")
+        m.wait_for_open_port(9300)
+
+    with subtest("the CA is made once, root-only, and never replaced"):
+        machine.succeed("test $(stat -c %a:%U /var/lib/sso-ca) = 700:root")
+        machine.succeed("test $(stat -c %a:%U /var/lib/sso-ca/ca.key) = 600:root")
+        subject = machine.succeed("openssl x509 -in /var/lib/sso-ca/ca.pem -noout -subject")
+        assert "farm1 SSO CA" in subject, subject
+        before = machine.succeed("sha256sum /var/lib/sso-ca/ca.key /var/lib/sso-ca/ca.pem")
+        machine.succeed("systemctl restart sso-ca.service sso.service")
+        machine.wait_for_open_port(9300)
+        assert machine.succeed("sha256sum /var/lib/sso-ca/ca.key /var/lib/sso-ca/ca.pem") == before
 
     with subtest("sign-in page"):
         machine.succeed("curl -sf http://127.0.0.1:9300/signin | grep -q '<title>Sign in'")
@@ -63,10 +85,11 @@ pkgs.testers.runNixOSTest {
         ))
         assert out["verification_uri"] == "https://id.auth.jack.farm/device", out
 
-    with subtest("sudo sso enroll works for root only"):
-        link = machine.succeed("sso enroll jack")
-        assert "https://id.auth.jack.farm/enroll/jack." in link, link
-        machine.fail("runuser -u member -- sso enroll jack")
+    with subtest("sudo sso enroll works for root only, with either CA"):
+        for m in (machine, given):
+            link = m.succeed("sso enroll jack")
+            assert "https://id.auth.jack.farm/enroll/jack." in link, link
+            m.fail("runuser -u member -- sso enroll jack")
 
     with subtest("the unit is sandboxed and not root"):
         user = machine.succeed("systemctl show -p User --value sso").strip()
@@ -78,6 +101,7 @@ pkgs.testers.runNixOSTest {
         machine.succeed("systemctl stop sso")
         report = machine.succeed("journalctl -u sso -o cat | sso audit verify -")
         print(report)
-        assert " in 1 chains" in report and "no audit_stop" not in report, report
+        # Two runs: before and after the restart above.
+        assert " in 2 chains" in report and "no audit_stop" not in report and "line " not in report, report
   '';
 }

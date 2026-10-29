@@ -3,30 +3,46 @@
 let
   inherit (lib) mkEnableOption mkIf mkOption types;
   cfg = config.services.sso;
+  sso = lib.getExe' cfg.package "sso";
 
-  # Option for option the JSON that internal/config reads.
-  configJSON = pkgs.writeText "sso.json" (builtins.toJSON {
+  # With neither caCertificate nor caKeyFile set, the CA is made on the host
+  # at first boot and its key never leaves it.
+  generated = cfg.caCertificate == null && cfg.caKeyFile == null;
+  caDir = "/var/lib/sso-ca";
+  keyFile = if generated then "${caDir}/ca.key" else cfg.caKeyFile;
+
+  # Option for option the JSON that internal/config reads, with the CA
+  # certificate at caPath.
+  configJSON = name: caPath: pkgs.writeText name (builtins.toJSON {
     inherit (cfg) rpId origin listenAddress;
-    caCertificate = "${cfg.caCertificate}";
+    caCertificate = caPath;
     users = lib.mapAttrs (_: u: { inherit (u) roles services sources passkeys; }) cfg.users;
     clients = lib.mapAttrs (_: c: { inherit (c) redirectUri; }) cfg.clients;
     audit = { inherit (cfg.audit) retentionDays; };
   });
 
-  # A mistake in the configuration fails the build, not the first sign-in.
-  configFile = pkgs.runCommand "sso-config" { } ''
-    ${lib.getExe' cfg.package "sso"} config check ${configJSON}
-    cp ${configJSON} $out
+  # A generated CA doesn't exist at build time, so the check uses a
+  # throwaway one; everything else is checked as deployed.
+  checkCA = pkgs.runCommand "sso-check-ca" { } "${sso} ca init --name check --years 1 --out $out";
+  checked = name: caPath: pkgs.runCommand name { } ''
+    ${sso} config check ${configJSON "sso-check.json" (if generated then "${checkCA}/ca.pem" else caPath)}
+    cp ${configJSON "${name}.json" caPath} $out
   '';
+
+  # A mistake in the configuration fails the build, not the first sign-in.
+  # The service reads a generated certificate through LoadCredential, as its
+  # directory is root's.
+  serveConfig = checked "sso-config" (if generated then "/run/credentials/sso.service/ca.pem" else "${cfg.caCertificate}");
+  enrollConfig = if generated then checked "sso-enroll-config" "${caDir}/ca.pem" else serveConfig;
 
   # sso on PATH, with the configuration and the CA key filled in for enroll,
   # so `sudo sso enroll jack` works on the host.
   wrapper = pkgs.writeShellScriptBin "sso" ''
     if [ "''${1-}" = enroll ]; then
       shift
-      exec ${lib.getExe' cfg.package "sso"} enroll --ca-key ${lib.escapeShellArg cfg.caKeyFile} ${configFile} "$@"
+      exec ${sso} enroll --ca-key ${lib.escapeShellArg keyFile} ${enrollConfig} "$@"
     fi
-    exec ${lib.getExe' cfg.package "sso"} "$@"
+    exec ${sso} "$@"
   '';
 
   passkey = types.submodule {
@@ -96,19 +112,37 @@ in
     };
 
     caCertificate = mkOption {
-      type = types.path;
+      type = types.nullOr types.path;
+      default = null;
       example = lib.literalExpression "./sso/ca.pem";
-      description = "CA certificate from `sso ca init`. Public.";
+      description = ''
+        CA certificate from `sso ca init`. Public. Leave this and caKeyFile
+        unset to have the CA made in ${caDir} at first boot (see generatedCA).
+      '';
     };
 
     caKeyFile = mkOption {
-      type = types.str;
+      type = types.nullOr types.str;
+      default = null;
       example = "/run/agenix/sso-ca-key";
       description = ''
         CA private key from `sso ca init`, as a root-only file from a secrets
         tool. A string, so it never gets copied into the Nix store. The service
         reads it through LoadCredential.
       '';
+    };
+
+    generatedCA = {
+      name = mkOption {
+        type = types.str;
+        default = "SSO CA";
+        description = "Common name of a CA made at first boot.";
+      };
+      years = mkOption {
+        type = types.ints.positive;
+        default = 5;
+        description = "Lifetime of a CA made at first boot.";
+      };
     };
 
     users = mkOption {
@@ -143,20 +177,39 @@ in
         message = "services.sso.listenAddress must be a loopback address, with the reverse proxy on the same host.";
       }
       {
-        assertion = lib.hasPrefix "/" cfg.caKeyFile && !lib.hasPrefix builtins.storeDir cfg.caKeyFile;
+        assertion = (cfg.caCertificate == null) == (cfg.caKeyFile == null);
+        message = "services.sso: set both caCertificate and caKeyFile, or neither to make the CA at first boot.";
+      }
+      {
+        assertion = generated || (lib.hasPrefix "/" keyFile && !lib.hasPrefix builtins.storeDir keyFile);
         message = "services.sso.caKeyFile must be an absolute path outside the Nix store.";
       }
     ];
 
     environment.systemPackages = [ wrapper ];
 
+    # Makes the CA once; an existing one is never touched. Copy ca.pem from
+    # here into the configuration of every service that trusts it.
+    systemd.services.sso-ca = mkIf generated {
+      description = "Make the SSO CA";
+      unitConfig.ConditionPathExists = "!${keyFile}";
+      serviceConfig = {
+        Type = "oneshot";
+        ExecStart = lib.escapeShellArgs [ sso "ca" "init" "--name" cfg.generatedCA.name "--years" (toString cfg.generatedCA.years) "--out" caDir ];
+        PrivateNetwork = true;
+        ProtectSystem = "strict";
+        ReadWritePaths = [ "/var/lib" ];
+      };
+    };
+
     systemd.services.sso = {
       description = "SSO IdP and CA";
       wantedBy = [ "multi-user.target" ];
-      after = [ "network.target" ];
+      after = [ "network.target" ] ++ lib.optional generated "sso-ca.service";
+      requires = lib.optional generated "sso-ca.service";
       serviceConfig = {
-        ExecStart = "${lib.getExe' cfg.package "sso"} serve ${configFile}";
-        LoadCredential = [ "ca.key:${cfg.caKeyFile}" ];
+        ExecStart = "${sso} serve ${serveConfig}";
+        LoadCredential = [ "ca.key:${keyFile}" ] ++ lib.optional generated "ca.pem:${caDir}/ca.pem";
         Restart = "on-failure";
         DynamicUser = true;
 

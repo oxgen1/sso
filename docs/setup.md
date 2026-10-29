@@ -25,7 +25,17 @@ The IdP is only needed to sign in and to approve destructive actions. If it's do
 
 ## Create the CA
 
-Once, on a trusted machine:
+Two ways. Either way, `ca.pem` is public and goes into the Nix configuration of every service that trusts the CA; commit it.
+
+**On the IdP host (the default).** Leave `caCertificate` and `caKeyFile` unset. At first boot, the `sso-ca` unit makes the CA in `/var/lib/sso-ca` (directory 0700, key 0600, root's), and never touches an existing one. The key never leaves the host. `/var/lib` has to persist across reboots. Then copy the certificate out for the services:
+
+```sh
+scp root@idp-host:/var/lib/sso-ca/ca.pem ./sso/ca.pem
+```
+
+There's no backup of the key unless you make one. Losing it means rotating the CA (below), which is cheap: certificates last 8 h anyway, and passkeys don't depend on the CA.
+
+**Ahead, on a trusted machine,** to keep the key in a secrets tool:
 
 ```sh
 sso ca init --name "farm1 SSO CA" --years 5 --out ./ca
@@ -33,7 +43,9 @@ sso ca init --name "farm1 SSO CA" --years 5 --out ./ca
 # ./ca/ca.key   private, goes into your secrets tool, never into the Nix store
 ```
 
-Put `ca.key` in agenix or sops-nix so it appears on the IdP host as a root-only file. The module passes it to the service with systemd `LoadCredential`, so the `sso` process reads it without having file-system access to it. Commit `ca.pem` next to your host configuration; it isn't secret.
+Put `ca.key` in agenix or sops-nix so it appears on the IdP host as a root-only file, and set `caCertificate` and `caKeyFile`. Give the key file a rule of its own, readable only by you and the IdP host, not one shared by every host.
+
+Both ways, the module passes the key to the service with systemd `LoadCredential`, so the `sso` process reads it without having file-system access to it.
 
 ## Example 1: one host, one user
 
@@ -151,7 +163,8 @@ The web-app side (Caddy and `sso-proxy` on `farm-1`) is in [integration.md](inte
 | `rpId` | The WebAuthn RP ID. Every passkey is bound to it for good: changing it means re-enrolling everyone. |
 | `origin` | The exact origin of the IdP. Services check passkey assertions against it. |
 | `listenAddress` | Loopback address and port, default `127.0.0.1:9300`. The reverse proxy in front terminates TLS and has to be on the same host: the IdP trusts `X-Forwarded-For` only from loopback. |
-| `caCertificate`, `caKeyFile` | The CA pair from `sso ca init`. `caKeyFile` is a string path outside the Nix store (from agenix or sops-nix), read through `LoadCredential`. |
+| `caCertificate`, `caKeyFile` | The CA pair from `sso ca init`, or neither to make the CA on the host at first boot. `caKeyFile` is a string path outside the Nix store (from agenix or sops-nix), read through `LoadCredential`. |
+| `generatedCA.name`, `generatedCA.years` | The CA made at first boot: common name (default `SSO CA`) and lifetime (default 5). |
 | `users.<name>.roles` | Sorted into the certificate. `write` allows writes; `admin` plus a passkey touch allows destructive actions. Roles apply to every service in `services`. |
 | `users.<name>.services` | The services the certificate is valid for. A service rejects any certificate that doesn't name it (`scope`). |
 | `users.<name>.sources` | Optional CIDR prefixes. If set, services reject the certificate from any other address (`scope`). |
@@ -292,8 +305,8 @@ For a `sig_mismatch` you can't explain, turn on the service's debug flag to log 
 
 The emergency stop: after it, every certificate in circulation is useless.
 
-1. `sso ca init --out ./ca-new`, and put the new key in your secrets tool.
-2. Set `caCertificate` and `caKeyFile` on the IdP, and the new `ca.pem` on **every** service. Deploy them together.
+1. A CA made on the host: move `/var/lib/sso-ca` aside and restart `sso-ca` and `sso`, then copy the new `ca.pem` out. A CA made ahead: `sso ca init --out ./ca-new`, put the new key in your secrets tool, and set `caCertificate` and `caKeyFile` on the IdP.
+2. Put the new `ca.pem` on **every** service and deploy them together.
 3. Everyone runs `farm login` again; web sessions sign in again silently.
 
 Passkeys are unaffected: they belong to the RP ID, not to the CA.

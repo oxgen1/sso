@@ -30,8 +30,8 @@ Logging, rate limits and tests are part of every milestone, not a phase at the e
 
 ## 3. Nix and deployment
 
-- [x] `packages.sso` (runs every test, lib's too), `nixosModules.sso` (`nix/module.nix`): options as in setup.md, the configuration checked at build time with `sso config check`, a hardened unit (`DynamicUser`, CA key through `LoadCredential`, only localhost may connect, exposure 0.9), and an `sso` wrapper on PATH so `sudo sso enroll jack` works.
-- [x] NixOS VM test without a browser (`nix/test.nix`): the unit starts, the sign-in page and the device flow answer, enroll works for root only, the sandbox scores 1.5 or better, and the run's audit chain verifies.
+- [x] `packages.sso` (runs every test, lib's too), `nixosModules.sso` (`nix/module.nix`): options as in setup.md, the configuration checked at build time with `sso config check`, a hardened unit (`DynamicUser`, CA key through `LoadCredential`, only localhost may connect, exposure 0.9), the CA made on the host at first boot unless one is given, and an `sso` wrapper on PATH so `sudo sso enroll jack` works.
+- [x] NixOS VM test without a browser (`nix/test.nix`): a generated CA (made once, root-only, never replaced) and a given one, the unit starts, the sign-in page and the device flow answer, enroll works for root only, the sandbox scores 1.5 or better, and the run's audit chain verifies.
 - [ ] NixOS VM test with headless Chromium's virtual authenticator: enrollment, sign-in, device approval. Interop check of signatures against an independent RFC 9421 implementation.
 - [ ] Deploy on its own VM over WireGuard; NTP on every host.
 
