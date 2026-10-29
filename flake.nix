@@ -15,7 +15,7 @@
           version = "0.1.0";
           src = self;
           # Update after changing go.mod: set to lib.fakeHash, build, copy the "got:" hash.
-          vendorHash = "sha256-Fdy4oEVrTvMdKHMsWTAodSrTQtigovFPOMbpomkZVO4=";
+          vendorHash = "sha256-aAWoy8ZH4fLcYz/l9ZuY6hO/YrErt3/YVfcFaPrXprE=";
           subPackages = [ "cmd/sso" ];
           env.CGO_ENABLED = 0;
           ldflags = [ "-s" "-w" ];

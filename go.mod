@@ -1,6 +1,6 @@
 module github.com/oxgen1/sso
 
-go 1.26.10
+go 1.26.0
 
 // The shared library is its own module so statusd and farm depend on it alone,
 // and it only gets a new version when the protocol changes.
