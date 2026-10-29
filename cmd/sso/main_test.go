@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/oxgen1/sso/internal/audit"
 	"github.com/oxgen1/sso/internal/config"
 )
 
@@ -131,6 +132,58 @@ func TestServe(t *testing.T) {
 	}
 	if !strings.Contains(logs.String(), `"msg":"listening"`) {
 		t.Errorf("logs: %s", logs.String())
+	}
+
+	// The run left one whole chain, which audit verify reads from a file.
+	file := filepath.Join(t.TempDir(), "journal")
+	if err := os.WriteFile(file, logs.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := run([]string{"audit", "verify", file}, &out); err != nil {
+		t.Fatalf("audit verify: %v\n%s", err, &out)
+	}
+	if !strings.Contains(out.String(), "2 audit records in 1 chains") || strings.Contains(out.String(), "no audit_stop") {
+		t.Errorf("audit verify:\n%s", &out)
+	}
+}
+
+func TestAuditVerify(t *testing.T) {
+	var b bytes.Buffer
+	l, err := audit.New(&b, time.Now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range []string{"jack", "guest"} {
+		if err := l.Write("login", "allow", "", "user", u); err != nil {
+			t.Fatal(err)
+		}
+	}
+	good := b.String()
+	var out bytes.Buffer
+	if err := auditVerify([]string{"-"}, strings.NewReader(good), &out); err != nil ||
+		out.String() != "3 audit records in 1 chains; 0 other lines skipped\n"+
+			"  chain 1: lines 1-3, seq 0-2, no audit_stop (still running, crashed, or cut off)\n" {
+		t.Errorf("good: %v\n%s", err, &out)
+	}
+	out.Reset()
+	lines := strings.SplitAfter(good, "\n")
+	if err := auditVerify([]string{"-"}, strings.NewReader(lines[2]), &out); err != nil ||
+		!strings.Contains(out.String(), "seq 2-2, earlier records not given") {
+		t.Errorf("rotated: %v\n%s", err, &out)
+	}
+	out.Reset()
+	if err := auditVerify([]string{"-"}, strings.NewReader(strings.Replace(good, "jack", "eve", 1)), &out); err == nil ||
+		!strings.Contains(out.String(), "line 3: prev doesn't match line 2") {
+		t.Errorf("tampered: %v\n%s", err, &out)
+	}
+	for _, args := range [][]string{nil, {"a", "b"}, {"/nonexistent"}} {
+		if err := auditVerify(args, strings.NewReader(""), &out); err == nil {
+			t.Errorf("%q: no error", args)
+		}
+	}
+	if err := auditVerify([]string{"-"}, strings.NewReader(strings.Repeat("x", 2<<20)), &out); err == nil {
+		t.Error("overlong line: no error")
 	}
 }
 

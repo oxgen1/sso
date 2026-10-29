@@ -36,7 +36,7 @@ Out of scope:
 | IdP and CA | SSO session, device flow, issues client certificates, destructive-action approval page. | `cmd/sso` |
 | Auth proxy | Caddy `forward_auth` endpoint, HttpOnly SameSite=Strict cookie sessions. | `cmd/sso-proxy` |
 | Shared library | Signs and verifies requests (`httpsig`), issues and verifies certificates (`cert`), verifies destructive-action assertions. Standard library only. | `lib/`, its own Go module |
-| `mvm` | `mvm login` (device flow), `mvm req` (signed requests). | server-nix `tools/mvm` |
+| `farm` | Remote status and light management for microvms and slimdeploy previews, and the first real client of the SSO: `farm login` (device flow), `farm req` (signed requests). Not `mvm`, which stays the fast management tool on the host. | `github.com/oxgen1/farm` (~/Dev/farm) |
 
 ## Protocol profile
 
@@ -103,7 +103,7 @@ The same flow works from the CLI and from a browser, and the CLI stays pure Go w
 
 ```mermaid
 sequenceDiagram
-  participant C as mvm or web app
+  participant C as farm or web app
   participant I as IdP approval page
   participant S as statusd
   C->>C: Build the signature base for the request
@@ -144,23 +144,23 @@ The approval page builds the summary it shows from the same signature base that 
 
 ## Device flow and certificates
 
-`mvm login` uses the OAuth device flow (RFC 8628), so the CLI never handles a passkey and stays pure Go.
+`farm login` uses the OAuth device flow (RFC 8628), so the CLI never handles a passkey and stays pure Go.
 
-1. `mvm` makes a P-256 key pair and posts `client_id=mvm` and a PKCS #10 CSR (`csr`, unpadded base64url DER) to `POST /device/code`.
-   - The CSR's signature proves `mvm` holds the key.
+1. `farm` makes a P-256 key pair and posts `client_id=farm` and a PKCS #10 CSR (`csr`, unpadded base64url DER) to `POST /device/code`.
+   - The CSR's signature proves `farm` holds the key.
    - The subject must be empty and there must be no extensions: everything in the certificate comes from the configuration.
    - Only ES256 on P-256 is accepted.
 2. The IdP answers as RFC 8628 §3.2 says: a device code, a user code, the verification URIs, `expires_in` 600 and `interval` 5.
    - The user code is 8 letters from RFC 8628's base-20 consonant alphabet (about 34.5 bits), shown as `XXXX-XXXX`.
    - The device code is the user code, a dot and 128 random bits. The user code finds the pending request; the random part, compared in constant time, proves the poller is the device.
    - At most 100 requests are pending. Each one costs a token from the same per-address bucket as starting a sign-in.
-3. `GET /device` shows the pending request: the code, the address it came from, the key's SHA-256 fingerprint (as OpenSSH writes one; `mvm` prints the same) and when it was asked. **Approving is a passkey assertion**, the same as sign-in (UV required, no `allowCredentials`, the user found from the credential ID), whose challenge is issued for that one request. The touch both says who the user is and approves; the SSO session plays no part, and approving doesn't start one.
+3. `GET /device` shows the pending request: the code, the address it came from, the key's SHA-256 fingerprint (as OpenSSH writes one; `farm` prints the same) and when it was asked. **Approving is a passkey assertion**, the same as sign-in (UV required, no `allowCredentials`, the user found from the credential ID), whose challenge is issued for that one request. The touch both says who the user is and approves; the SSO session plays no part, and approving doesn't start one.
    - So every certificate needs the authenticator at the moment it's issued. With approval through the session, a browser left signed in could mint certificates until the session ended, each lasting 8 h more: up to 16 h from one touch, against the threat model's 8.
    - A challenge records what it's for. A sign-in challenge can't approve a device, nor the reverse (`login_challenge` either way).
    - Denying is a plain form post and needs no passkey: anyone with the code can refuse, and refusing grants nothing. It can't undo an approval.
    - Looking up a code (the page, starting an approval, denying) has a token bucket per address (10, then one every 30 s), so nobody can search the code space.
    - If the user's certificates are limited to source addresses and the request came from outside them, approving denies it: the certificate would be useless there, and a request from somewhere the user can't be is more likely phishing than travel.
-4. `mvm` polls `POST /device/token` with the device grant. Errors are RFC 8628's: `authorization_pending`, `slow_down` (polling faster than the interval, which then grows by 5 s), `access_denied` and `expired_token`; a wrong secret is `invalid_grant`.
+4. `farm` polls `POST /device/token` with the device grant. Errors are RFC 8628's: `authorization_pending`, `slow_down` (polling faster than the interval, which then grows by 5 s), `access_denied` and `expired_token`; a wrong secret is `invalid_grant`.
 5. After approval, the next poll gets the certificate, issued then with the user's claims from the configuration, as `{"certificate": "<PEM>"}`. It isn't an OAuth access token, and it's the only non-standard part. The request is removed, so each code yields one certificate.
 
 The audit log has `device_code` (with the user code and key fingerprint), `device_approve` (allow with the user and `passkey_cred_id`; deny with `user_denied`, `source`, `device_expired`, `device_handled`, or any reason a sign-in can fail with) and `certificate` (allow with `cert_serial`, the approving passkey and `not_after`, or deny with `device_code` for a wrong secret).
@@ -204,7 +204,7 @@ The CA key is read at start-up from `ca.key` in `$CREDENTIALS_DIRECTORY`, where 
 | Proxy sessions | Proxy memory | Silent re-login through the SSO session |
 | Nonce cache | Each service's memory, with a size limit | No replay risk, because services reject signatures created before they started. If the cache fills up, writes are rejected. |
 | Rate-limit buckets | Memory | Reset |
-| Client key and certificate | Client, 0600 file | Run `mvm login` again |
+| Client key and certificate | Client, 0600 file | Run `farm login` again |
 | Audit log | journald, shipped off the host | Must not be lost |
 
 ## Logging
@@ -212,13 +212,17 @@ The CA key is read at start-up from `ca.key` in `$CREDENTIALS_DIRECTORY`, where 
 - **Audit log:** one JSON record per event, with a schema version.
   - Fields: `user`, `cert_serial`, `passkey_cred_id` (destructive tier only), `action`, `target`, `result`, `reason`, `request_id`, `client_ip`, `server_time`, `created`.
   - Events: logins, issued certificates, writes, destructive actions and denials. Reads are counted per user per minute.
-  - Each record holds the SHA-256 of the previous one. The latest hash is shipped off the host with the records, so a gap or edit shows up.
+  - A hash chain (`internal/audit`): each record is one JSON line with `seq` and `prev`, the hex SHA-256 of the line before it, as `sha256sum` prints it. An edited record breaks the next one's `prev`; a deleted one breaks `seq` as well.
+    - Each run of the IdP is its own chain, from `audit_start` (`seq` 0, `prev` all zeros) to `audit_stop` on a clean shutdown. Nothing is kept on disk to link runs: that would be state for little gain, since the records are shipped off the host anyway.
+    - `sso audit verify` checks `journalctl -o cat` output. Only the oldest chain may start without `audit_start`, as journald's retention removes the oldest records.
+    - What a chain can't show: its newest records cut off, or a whole run deleted. The copy shipped off the host covers that. A chain with no `audit_stop` before the next `audit_start` is a crash or a cut, and worth a look.
+    - Audit and diagnostic records share one writer with a lock, so lines never interleave.
   - Personal data (the IP) is kept for a fixed retention period.
 - **Diagnostic log:** errors, panics with the request ID, and latency, one line per request.
-  - On `sig_mismatch`, log a hash of the rebuilt signature base. `mvm` prints the hash of the one it signed:
+  - On `sig_mismatch`, log a hash of the rebuilt signature base. `farm` prints the hash of the one it signed:
     - Different hashes mean the two sides wrote the request down differently (canonicalization).
     - Matching hashes mean the wrong key.
-  - An opt-in debug flag logs the full signature base, so a failure can be reproduced offline with `mvm verify`.
+  - An opt-in debug flag logs the full signature base, so a failure can be reproduced offline with `farm verify`.
 - Client IP is logged, never signed.
 
 ## Rate limits

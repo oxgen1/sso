@@ -1,6 +1,6 @@
 // Package httpsig signs and verifies requests with RFC 9421 HTTP Message
 // Signatures, using one fixed profile (see profile.go and docs/design.md). The
-// mvm CLI signs with Signer and statusd verifies with Verifier, so it may
+// farm CLI signs with Signer and statusd verifies with Verifier, so it may
 // import only the standard library (enforced by depguard in .golangci.yml at
 // the repo root).
 //

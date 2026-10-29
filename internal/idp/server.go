@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/oxgen1/sso/internal/audit"
 	"github.com/oxgen1/sso/internal/config"
 	"github.com/oxgen1/sso/internal/ratelimit"
 	"github.com/oxgen1/sso/internal/store"
@@ -82,14 +83,15 @@ type Server struct {
 	addrLimit  *ratelimit.Limiter
 	lookLimit  *ratelimit.Limiter
 	log        *slog.Logger
+	auditLog   *audit.Log
 	now        func() time.Time
 	mux        *http.ServeMux
 }
 
-// New returns the IdP for cfg, issuing certificates from ca. Audit and diagnostic records go to log, told
-// apart by their "log" attribute; now is the clock for everything but
+// New returns the IdP for cfg, issuing certificates from ca. Audit records
+// go to aud, diagnostic records to log; now is the clock for everything but
 // latency.
-func New(cfg *config.Config, ca *cert.CA, log *slog.Logger, now func() time.Time) (*Server, error) {
+func New(cfg *config.Config, ca *cert.CA, log *slog.Logger, aud *audit.Log, now func() time.Time) (*Server, error) {
 	v, err := assertion.NewVerifier(cfg.RPID, cfg.Origin)
 	if err != nil {
 		return nil, err
@@ -115,6 +117,7 @@ func New(cfg *config.Config, ca *cert.CA, log *slog.Logger, now func() time.Time
 		addrLimit:  ratelimit.New(addrEvery, addrBurst, maxClients, now),
 		lookLimit:  ratelimit.New(lookupEvery, lookupBurst, maxClients, now),
 		log:        log,
+		auditLog:   aud,
 		now:        now,
 		mux:        http.NewServeMux(),
 	}
@@ -183,16 +186,12 @@ func requestID(r *http.Request) string {
 	return id
 }
 
-// audit writes an audit record. Its fields follow docs/design.md#logging;
-// the hash chain is still to come.
+// audit writes an audit record. Its fields follow docs/design.md#logging.
 func (s *Server) audit(r *http.Request, action, result, reason string, attrs ...any) {
-	base := []any{"log", "audit", "v", 1, "action", action, "result", result}
-	if reason != "" {
-		base = append(base, "reason", reason)
+	base := []any{"request_id", requestID(r), "client_ip", clientAddr(r).String()}
+	if err := s.auditLog.Write(action, result, reason, append(base, attrs...)...); err != nil {
+		s.log.Error("audit record lost", "log", "diag", "request_id", requestID(r), "action", action, "err", err.Error())
 	}
-	base = append(base, "request_id", requestID(r), "client_ip", clientAddr(r).String(),
-		"server_time", s.now().UTC().Format(time.RFC3339))
-	s.log.Info(action, append(base, attrs...)...)
 }
 
 // clientAddr is the address a request came from. Behind Caddy on the same

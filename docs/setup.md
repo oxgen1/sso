@@ -2,16 +2,16 @@
 
 How to run the SSO: the IdP, users and passkeys, and the first sign-in. Connecting services, web apps and clients is in [integration.md](integration.md); the reasoning behind all of it is in [design.md](design.md).
 
-> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init`, `sso config check`, passkey registration (no page yet), and `sso serve` with passkey sign-in, the SSO session, the device flow that issues certificates (no `mvm login` yet), and `sso enroll`. To try it on a laptop, see [Try it locally](#try-it-locally). Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
+> **Status:** written ahead of the code, as the finished system should work. Built so far: `lib/httpsig`, `lib/cert`, `lib/assertion`, configuration loading, `sso ca init`, `sso config check`, `sso serve` with passkey sign-in, the SSO session, the device flow that issues certificates (no `farm login` yet) and a hash-chained audit log, `sso enroll` with its page, and `sso audit verify`. To try it on a laptop, see [Try it locally](#try-it-locally). Option names, commands and paths may still change; where they do, the code wins and this file gets fixed.
 
 ## Pieces
 
 | Piece | Runs on | Talks to |
 |---|---|---|
-| `sso` (IdP and CA) | its own host or VM | browsers (passkey sign-in, approvals), `mvm` (device flow), `sso-proxy` (code exchange) |
+| `sso` (IdP and CA) | its own host or VM | browsers (passkey sign-in, approvals), `farm` (device flow), `sso-proxy` (code exchange) |
 | `sso-proxy` | the host running Caddy for web apps | Caddy (`forward_auth`), the IdP |
 | services (statusd, …) | anywhere | nobody: they verify requests with the CA certificate alone |
-| `mvm` | your laptop | the IdP once a day, then services directly |
+| `farm` | your laptop | the IdP once a day, then services directly |
 
 The IdP is only needed to sign in and to approve destructive actions. If it's down, certificates already issued keep working until they expire.
 
@@ -180,12 +180,12 @@ CREDENTIALS_DIRECTORY=$PWD/ca ./sso serve sso.json
 
 1. **Enroll.** In another terminal: `./sso enroll --ca-key ca/ca.key sso.json jack`. Open the link, name the passkey and register it. For a software passkey, use Chrome DevTools → More tools → WebAuthn → "Enable virtual authenticator environment", with resident keys and user verification on. Add the result to `passkeys` in `sso.json` as JSON (`{"name":"…","id":"…","publicKey":"…"}`, the snippet's three values) and restart `sso serve`.
 2. **Sign in** at <http://localhost:9300/signin>.
-3. **Device flow,** as `mvm login` will do it:
+3. **Device flow,** as `farm login` will do it:
 
    ```sh
    openssl ecparam -name prime256v1 -genkey -noout -out dev.key
    openssl req -new -key dev.key -subj / -sha256 -outform DER -out dev.csr
-   curl -s localhost:9300/device/code -d client_id=mvm -d csr=$(basenc --base64url -w0 dev.csr | tr -d =)
+   curl -s localhost:9300/device/code -d client_id=farm -d csr=$(basenc --base64url -w0 dev.csr | tr -d =)
    ```
 
    Open `verification_uri_complete` and check the key fingerprint against this:
@@ -197,7 +197,7 @@ CREDENTIALS_DIRECTORY=$PWD/ca ./sso serve sso.json
    Approve with the passkey, then collect the certificate:
 
    ```sh
-   curl -s localhost:9300/device/token -d client_id=mvm \
+   curl -s localhost:9300/device/token -d client_id=farm \
      -d grant_type=urn:ietf:params:oauth:grant-type:device_code -d device_code=DEVICE_CODE
    ```
 
@@ -230,27 +230,34 @@ To remove a lost authenticator, delete its line and deploy. Certificates already
 From the laptop, over WireGuard:
 
 ```sh
-mvm login
+farm login
 # Open https://id.auth.jack.farm/device and enter WDJB-MJHT
 # Key SHA256:4dWm…Xz0
 # Waiting for approval…
 # Signed in as jack until 18:04 (statusd; roles: write)
 ```
 
-On the page, check that the code and key fingerprint match what `mvm` printed, and approve with a passkey: the touch is the approval, so it's needed every time, signed in or not. `mvm` made a fresh key pair for this login; the private key never leaves `~/.local/state/mvm/` (mode 0600), and the certificate next to it is valid for 8 hours. Then:
+On the page, check that the code and key fingerprint match what `farm` printed, and approve with a passkey: the touch is the approval, so it's needed every time, signed in or not. `farm` made a fresh key pair for this login; the private key never leaves `~/.local/state/farm/` (mode 0600), and the certificate next to it is valid for 8 hours. Then:
 
 ```sh
-mvm req GET /v1/status
-mvm req POST /v1/microvms/web/restart
+farm req GET /v1/status
+farm req POST /v1/microvms/web/restart
 ```
 
 ## Check it's working
 
 ```sh
 journalctl -u sso -o cat | jq 'select(.log == "audit")'
+journalctl -u sso -o cat | sso audit verify -
 ```
 
-Each sign-in shows up as a `login` record and an `issue` record with the certificate serial. Every later request a service accepts or rejects carries the same serial, so `cert_serial` ties a service's audit log back to the sign-in.
+A web sign-in shows up as a `login` record. A `farm login` shows up as `device_code`, `device_approve`, then `certificate` with the certificate serial. Every later request a service accepts or rejects carries the same serial, so `cert_serial` ties a service's audit log back to the sign-in.
+
+`sso audit verify` checks the hash chain: one chain per run of `sso serve`, each line's `prev` the SHA-256 of the line before. It prints each chain and every break, and exits non-zero if there is one. To check one link by hand:
+
+```sh
+journalctl -u sso -o cat | grep '"log":"audit"' | sed -n 4p | tr -d '\n' | sha256sum   # line 5's prev
+```
 
 ## Operations
 
@@ -261,24 +268,24 @@ Services answer a rejected request with only the HTTP status. The reason is in t
 | Reason | Usually means | Do |
 |---|---|---|
 | `expired` / `not_yet_valid` | Clock skew over 5 minutes, or a request held back and resent | Check NTP on both ends |
-| `before_start` | A write signed before the service restarted | Retry; `mvm` re-signs automatically |
+| `before_start` | A write signed before the service restarted | Retry; `farm` re-signs automatically |
 | `authority` | The client used a host name or port the service doesn't list | Add it to the service's authorities, or fix the client's URL |
-| `cert_expired` | The 8 h are up | `mvm login` |
+| `cert_expired` | The 8 h are up | `farm login` |
 | `scope` | Wrong service, or a source address outside `sources` | Check `users.<name>.services` and `sources`; are you on WireGuard? |
 | `cert` | Not from this CA, or not the certificate profile | Usually a service with a stale `ca.pem` after rotation |
-| `sig_mismatch` | Wrong key, or the two sides built different signature bases | Compare `base_sha256` in the service log with `mvm`'s output: different hashes mean canonicalization, equal hashes mean the key |
+| `sig_mismatch` | Wrong key, or the two sides built different signature bases | Compare `base_sha256` in the service log with `farm`'s output: different hashes mean canonicalization, equal hashes mean the key |
 | `digest` | The body changed in transit | A proxy rewriting bodies |
 | `replay` | The same signed request seen twice | Expected if something retries blindly; otherwise investigate |
 | `nonce_full` | The nonce cache is full of live entries | Possible flood of valid writes; check the audit log for whose |
 | `role` | Signed fine, but the certificate lacks `write` (or `admin` for destructive) | Add the role to `users.<name>.roles` if intended |
-| `assertion_missing` | A destructive request without approval | Use `mvm req`, which asks for approval |
+| `assertion_missing` | A destructive request without approval | Use `farm req`, which asks for approval |
 | `assertion_challenge` | The passkey approved a different request | The approval page and the service built different bases, or an approval was reused |
 | `assertion_origin` | Approved somewhere other than `https://id.auth.jack.farm` | Investigate: some other page asked for a passkey |
 | `assertion_flags` | No user verification (PIN or biometric) | Set a PIN on the authenticator |
-| `assertion_credential` | The passkey isn't in the certificate | Enrolled after this certificate was issued: `mvm login` |
+| `assertion_credential` | The passkey isn't in the certificate | Enrolled after this certificate was issued: `farm login` |
 | `assertion_rp`, `assertion_type`, `assertion_sig_mismatch`, `assertion_malformed` | Not an approval from our page | Investigate |
 
-For a `sig_mismatch` you can't explain, turn on the service's debug flag to log full signature bases, then replay one offline with `mvm verify base.txt`.
+For a `sig_mismatch` you can't explain, turn on the service's debug flag to log full signature bases, then replay one offline with `farm verify base.txt`.
 
 ### Rotating the CA
 
@@ -286,10 +293,10 @@ The emergency stop: after it, every certificate in circulation is useless.
 
 1. `sso ca init --out ./ca-new`, and put the new key in your secrets tool.
 2. Set `caCertificate` and `caKeyFile` on the IdP, and the new `ca.pem` on **every** service. Deploy them together.
-3. Everyone runs `mvm login` again; web sessions sign in again silently.
+3. Everyone runs `farm login` again; web sessions sign in again silently.
 
 Passkeys are unaffected: they belong to the RP ID, not to the CA.
 
 ### Backups
 
-Nothing on the IdP needs backing up except the CA key, and even that can be replaced by rotating. Users, roles and passkeys are in the Nix configuration; sessions are in memory. The audit log is shipped off the host by journald.
+Nothing on the IdP needs backing up except the CA key, and even that can be replaced by rotating. Users, roles and passkeys are in the Nix configuration; sessions are in memory. The audit log is shipped off the host by journald; a chain on the host can't show its newest records were cut off, but the shipped copy can.

@@ -12,7 +12,7 @@
 <dt>Key</dt><dd><code>{{.Request.Key}}</code></dd>
 <dt>Asked at</dt><dd>{{.Request.At}}</dd>
 </dl>
-<p>Approve only if you just ran <code>mvm login</code> and the device shows this code and key.</p>
+<p>Approve only if you just ran <code>farm login</code> and the device shows this code and key.</p>
 <div id="actions" class="actions">
 <button id="passkey" type="button" data-begin="/device/begin" data-finish="/device/approve" data-code="{{.Request.Code}}">Approve with a passkey</button>
 <form method="post" action="/device/deny">

@@ -5,6 +5,7 @@
 //	sso config check FILE
 //	sso serve FILE    (CA key: $CREDENTIALS_DIRECTORY/ca.key)
 //	sso enroll [--ca-key KEY] FILE USER
+//	sso audit verify FILE|-
 package main
 
 import (
@@ -19,6 +20,7 @@ const usage = `usage:
   sso config check FILE
   sso serve FILE    (CA key: $CREDENTIALS_DIRECTORY/ca.key)
   sso enroll [--ca-key KEY] FILE USER
+  sso audit verify FILE|-    (journalctl -u sso -o cat | sso audit verify -)
 `
 
 func main() {
@@ -35,6 +37,8 @@ func run(args []string, out io.Writer) error {
 		return caInit(args[2:], out)
 	case "config check":
 		return configCheck(args[2:], out)
+	case "audit verify":
+		return auditVerify(args[2:], os.Stdin, out)
 	}
 	if len(args) > 0 {
 		switch args[0] {

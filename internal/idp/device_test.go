@@ -23,7 +23,7 @@ import (
 
 var formHeader = http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}
 
-// device is mvm's side of the flow.
+// device is farm's side of the flow.
 type device struct {
 	key *ecdsa.PrivateKey
 	csr string
@@ -45,7 +45,7 @@ func newDevice(t *testing.T, tmpl *x509.CertificateRequest) *device {
 	return &device{key: key, csr: base64.RawURLEncoding.EncodeToString(der)}
 }
 
-// form posts v as mvm would, with no Origin, and returns the JSON response
+// form posts v as farm would, with no Origin, and returns the JSON response
 // with every value as a string.
 func (e *env) form(path, remote string, v url.Values, xff ...string) (int, map[string]string) {
 	e.t.Helper()
@@ -69,7 +69,7 @@ func (e *env) form(path, remote string, v url.Values, xff ...string) (int, map[s
 // the user code.
 func (e *env) requestCode(d *device, remote string) (string, string) {
 	e.t.Helper()
-	code, out := e.form("/device/code", remote, url.Values{"client_id": {"mvm"}, "csr": {d.csr}})
+	code, out := e.form("/device/code", remote, url.Values{"client_id": {"farm"}, "csr": {d.csr}})
 	if code != http.StatusOK {
 		e.t.Fatalf("device code: %d %v", code, out)
 	}
@@ -79,7 +79,7 @@ func (e *env) requestCode(d *device, remote string) (string, string) {
 func (e *env) poll(deviceCode string) (int, map[string]string) {
 	e.t.Helper()
 	return e.form("/device/token", "", url.Values{
-		"grant_type": {deviceGrant}, "client_id": {"mvm"}, "device_code": {deviceCode},
+		"grant_type": {deviceGrant}, "client_id": {"farm"}, "device_code": {deviceCode},
 	})
 }
 
@@ -139,7 +139,7 @@ func (e *env) deny(userCode string) (int, string) {
 func TestDeviceFlow(t *testing.T) {
 	e := newEnv(t)
 	d := newDevice(t, nil)
-	code, out := e.form("/device/code", "", url.Values{"client_id": {"mvm"}, "csr": {d.csr}, "scope": {"ignored"}})
+	code, out := e.form("/device/code", "", url.Values{"client_id": {"farm"}, "csr": {d.csr}, "scope": {"ignored"}})
 	if code != http.StatusOK {
 		t.Fatalf("device code: %d %v", code, out)
 	}
@@ -265,7 +265,7 @@ func TestDeviceSource(t *testing.T) {
 	}
 
 	// From 192.168.1.9, through Caddy.
-	_, out := e.form("/device/code", "127.0.0.1:1", url.Values{"client_id": {"mvm"}, "csr": {newDevice(t, nil).csr}}, "192.168.1.9")
+	_, out := e.form("/device/code", "127.0.0.1:1", url.Values{"client_id": {"farm"}, "csr": {newDevice(t, nil).csr}}, "192.168.1.9")
 	deviceCode, userCode = out["device_code"], out["user_code"]
 	if status, out := e.approve(e.guest, userCode, signOpts{}); status != 200 {
 		t.Errorf("approve from inside the sources: %d %v", status, out)
@@ -334,19 +334,19 @@ func TestDeviceCodeRejects(t *testing.T) {
 		header http.Header
 		want   string
 	}{
-		"json":          {`{"client_id":"mvm"}`, http.Header{"Content-Type": {"application/json"}}, "invalid_request"},
-		"repeated":      {"client_id=mvm&client_id=mvm&csr=" + p256.csr, nil, "invalid_request"},
+		"json":          {`{"client_id":"farm"}`, http.Header{"Content-Type": {"application/json"}}, "invalid_request"},
+		"repeated":      {"client_id=farm&client_id=farm&csr=" + p256.csr, nil, "invalid_request"},
 		"bad encoding":  {"client_id=%zz", nil, "invalid_request"},
 		"client":        {"client_id=grafana&csr=" + p256.csr, nil, "invalid_client"},
 		"no client":     {"csr=" + p256.csr, nil, "invalid_client"},
-		"no csr":        {"client_id=mvm", nil, "invalid_request"},
-		"padded csr":    {"client_id=mvm&csr=" + p256.csr + "%3D", nil, "invalid_request"},
-		"not DER":       {"client_id=mvm&csr=" + enc([]byte("hello")), nil, "invalid_request"},
-		"subject":       {"client_id=mvm&csr=" + newDevice(t, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "root"}}).csr, nil, "invalid_request"},
-		"extensions":    {"client_id=mvm&csr=" + newDevice(t, &x509.CertificateRequest{DNSNames: []string{"x"}}).csr, nil, "invalid_request"},
-		"P-384":         {"client_id=mvm&csr=" + enc(p384CSR), nil, "invalid_request"},
-		"SHA-384":       {"client_id=mvm&csr=" + newDevice(t, &x509.CertificateRequest{SignatureAlgorithm: x509.ECDSAWithSHA384}).csr, nil, "invalid_request"},
-		"bad signature": {"client_id=mvm&csr=" + enc(tampered), nil, "invalid_request"},
+		"no csr":        {"client_id=farm", nil, "invalid_request"},
+		"padded csr":    {"client_id=farm&csr=" + p256.csr + "%3D", nil, "invalid_request"},
+		"not DER":       {"client_id=farm&csr=" + enc([]byte("hello")), nil, "invalid_request"},
+		"subject":       {"client_id=farm&csr=" + newDevice(t, &x509.CertificateRequest{Subject: pkix.Name{CommonName: "root"}}).csr, nil, "invalid_request"},
+		"extensions":    {"client_id=farm&csr=" + newDevice(t, &x509.CertificateRequest{DNSNames: []string{"x"}}).csr, nil, "invalid_request"},
+		"P-384":         {"client_id=farm&csr=" + enc(p384CSR), nil, "invalid_request"},
+		"SHA-384":       {"client_id=farm&csr=" + newDevice(t, &x509.CertificateRequest{SignatureAlgorithm: x509.ECDSAWithSHA384}).csr, nil, "invalid_request"},
+		"bad signature": {"client_id=farm&csr=" + enc(tampered), nil, "invalid_request"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := tc.header
@@ -375,11 +375,11 @@ func TestTokenRejects(t *testing.T) {
 		v    url.Values
 		want string
 	}{
-		"grant":        {url.Values{"grant_type": {"authorization_code"}, "client_id": {"mvm"}, "device_code": {deviceCode}}, "unsupported_grant_type"},
+		"grant":        {url.Values{"grant_type": {"authorization_code"}, "client_id": {"farm"}, "device_code": {deviceCode}}, "unsupported_grant_type"},
 		"client":       {url.Values{"grant_type": {deviceGrant}, "client_id": {"x"}, "device_code": {deviceCode}}, "invalid_client"},
-		"unknown":      {url.Values{"grant_type": {deviceGrant}, "client_id": {"mvm"}, "device_code": {"BCDFGHJK." + secret}}, "expired_token"},
-		"no secret":    {url.Values{"grant_type": {deviceGrant}, "client_id": {"mvm"}, "device_code": {userCode}}, "invalid_grant"},
-		"wrong secret": {url.Values{"grant_type": {deviceGrant}, "client_id": {"mvm"}, "device_code": {userCode + "." + secret[1:] + "A"}}, "invalid_grant"},
+		"unknown":      {url.Values{"grant_type": {deviceGrant}, "client_id": {"farm"}, "device_code": {"BCDFGHJK." + secret}}, "expired_token"},
+		"no secret":    {url.Values{"grant_type": {deviceGrant}, "client_id": {"farm"}, "device_code": {userCode}}, "invalid_grant"},
+		"wrong secret": {url.Values{"grant_type": {deviceGrant}, "client_id": {"farm"}, "device_code": {userCode + "." + secret[1:] + "A"}}, "invalid_grant"},
 		"empty":        {url.Values{}, "unsupported_grant_type"},
 	} {
 		if _, out := e.form("/device/token", "", tc.v); out["error"] != tc.want {
@@ -511,13 +511,13 @@ func TestDeviceLimits(t *testing.T) {
 	for range addrBurst {
 		e.requestCode(d, "10.3.0.0:1")
 	}
-	if code, out := e.form("/device/code", "10.3.0.0:1", url.Values{"client_id": {"mvm"}, "csr": {d.csr}}); code != http.StatusTooManyRequests {
+	if code, out := e.form("/device/code", "10.3.0.0:1", url.Values{"client_id": {"farm"}, "csr": {d.csr}}); code != http.StatusTooManyRequests {
 		t.Errorf("past the burst: %d %v", code, out)
 	}
 	for i := addrBurst; i < maxDevices; i++ {
 		e.requestCode(d, fmt.Sprintf("10.4.%d.%d:1", i/256, i%256))
 	}
-	if code, out := e.form("/device/code", "10.5.0.0:1", url.Values{"client_id": {"mvm"}, "csr": {d.csr}}); code != http.StatusServiceUnavailable {
+	if code, out := e.form("/device/code", "10.5.0.0:1", url.Values{"client_id": {"farm"}, "csr": {d.csr}}); code != http.StatusServiceUnavailable {
 		t.Errorf("full: %d %v", code, out)
 	}
 }
@@ -551,7 +551,7 @@ func TestDeviceIssuesOnce(t *testing.T) {
 	deviceCode, userCode := e.requestCode(newDevice(t, nil), "")
 	e.approve(e.jack, userCode, signOpts{})
 	e.clock.t = e.clock.t.Add(deviceInterval)
-	body := url.Values{"grant_type": {deviceGrant}, "client_id": {"mvm"}, "device_code": {deviceCode}}.Encode()
+	body := url.Values{"grant_type": {deviceGrant}, "client_id": {"farm"}, "device_code": {deviceCode}}.Encode()
 	codes := make(chan int, 20)
 	var wg sync.WaitGroup
 	for range cap(codes) {

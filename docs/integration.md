@@ -2,7 +2,7 @@
 
 How to put a service, a web app or a client behind the SSO. Running the IdP itself is in [setup.md](setup.md).
 
-> **Status:** written ahead of the code, as the finished system should work. The Go examples use the real API of `lib/httpsig`, `lib/cert` and `lib/assertion`, which exist; the Nix options, `sso-proxy` and `mvm` are still to be built.
+> **Status:** written ahead of the code, as the finished system should work. The Go examples use the real API of `lib/httpsig`, `lib/cert` and `lib/assertion`, which exist; the Nix options, `sso-proxy` and `farm` are still to be built.
 
 There are three ways in:
 
@@ -10,7 +10,7 @@ There are three ways in:
 |---|---|---|
 | A Go HTTP API | `lib` in-process: verify signed requests per route | [statusd](#statusd) |
 | A web app you don't want to change | Caddy `forward_auth` to `sso-proxy` | [Grafana](#web-apps-behind-caddy) |
-| A command line or script | `mvm req`, or `httpsig.Signer` from Go | [Clients](#clients) |
+| A command line or script | `farm req`, or `httpsig.Signer` from Go | [Clients](#clients) |
 
 ## statusd
 
@@ -116,11 +116,11 @@ func (a *Auth) handle(tier Tier, next http.HandlerFunc) http.Handler {
 }
 ```
 
-Send the client nothing but the status. The reason goes to the audit log, the error detail to the diagnostic log. On `sig_mismatch`, log `httpsig.BaseHash(e.Base)` from the `*httpsig.Error`, so it can be compared with the hash `mvm` prints.
+Send the client nothing but the status. The reason goes to the audit log, the error detail to the diagnostic log. On `sig_mismatch`, log `httpsig.BaseHash(e.Base)` from the `*httpsig.Error`, so it can be compared with the hash `farm` prints.
 
 ### The destructive tier
 
-A destructive request carries, as well as its signature, a passkey assertion whose challenge is SHA-256 of the request's signature base. `mvm` and web apps get it from the IdP's approval page (see [Clients](#destructive-actions)). The service checks it with `lib/assertion` against the passkey keys in the certificate:
+A destructive request carries, as well as its signature, a passkey assertion whose challenge is SHA-256 of the request's signature base. `farm` and web apps get it from the IdP's approval page (see [Clients](#destructive-actions)). The service checks it with `lib/assertion` against the passkey keys in the certificate:
 
 ```go
 a.assertion, err = assertion.NewVerifier("auth.jack.farm", "https://id.auth.jack.farm")
@@ -212,16 +212,16 @@ Destructive actions in a web app go through the same approval page as the CLI; t
 
 ## Clients
 
-### mvm
+### farm
 
 ```sh
-mvm login                                   # once a day; device flow, passkey on any device
-mvm req GET /v1/status                      # signed GET to statusd
-mvm req POST /v1/microvms/web/restart       # write: needs the write role
-mvm req -d '{"vm":"web"}' POST /v1/deploy   # body is covered by Content-Digest
+farm login                                   # once a day; device flow, passkey on any device
+farm req GET /v1/status                      # signed GET to statusd
+farm req POST /v1/microvms/web/restart       # write: needs the write role
+farm req -d '{"vm":"web"}' POST /v1/deploy   # body is covered by Content-Digest
 ```
 
-`mvm` reads the service address from `~/.config/mvm/config.toml`:
+`farm` reads the service address from `~/.config/farm/config.toml`:
 
 ```toml
 idp = "https://id.auth.jack.farm"
@@ -230,29 +230,29 @@ idp = "https://id.auth.jack.farm"
 url = "http://farm-1.wg:9021"   # must match one of statusd's authorities exactly
 ```
 
-When a request is rejected, `mvm` prints the status and the SHA-256 of the signature base it signed, for comparison with the service's log:
+When a request is rejected, `farm` prints the status and the SHA-256 of the signature base it signed, for comparison with the service's log:
 
 ```
 401 Unauthorized (base sha256 3f9c…e1)
 ```
 
-`mvm verify base.txt` re-checks a logged signature base offline.
+`farm verify base.txt` re-checks a logged signature base offline.
 
 ### Destructive actions
 
 ```sh
-mvm req DELETE /v1/microvms/old
+farm req DELETE /v1/microvms/old
 # This needs approval. Open:
 #   https://id.auth.jack.farm/approve/K7PX
 # Waiting…
 # Approved with yubikey-5c. 204 No Content
 ```
 
-`mvm` signs the request first, then posts the signature base to the IdP (a signed request too). The approval page shows the method, path and target in plain words, built from the same base it hashes, and asks for a passkey touch. `mvm` polls for the assertion and sends the request with it. The approval is good for that one request only: a different body, target or nonce changes the base, and the challenge with it.
+`farm` signs the request first, then posts the signature base to the IdP (a signed request too). The approval page shows the method, path and target in plain words, built from the same base it hashes, and asks for a passkey touch. `farm` polls for the assertion and sends the request with it. The approval is good for that one request only: a different body, target or nonce changes the base, and the challenge with it.
 
 ### Your own Go program
 
-Anything that can read the key and certificate `mvm login` wrote can sign requests:
+Anything that can read the key and certificate `farm login` wrote can sign requests:
 
 ```go
 import (
@@ -260,7 +260,7 @@ import (
 	"github.com/oxgen1/sso/lib/httpsig"
 )
 
-key, der := loadMvmCredentials() // ~/.local/state/mvm/{key,cert}.pem
+key, der := loadFarmCredentials() // ~/.local/state/farm/{key,cert}.pem
 c, err := cert.Parse(der)
 if err != nil {
 	return err
@@ -286,4 +286,4 @@ Sign last, after every header and the URL are final. Anything that changes the m
 3. Put writes on WireGuard (or a Unix socket) only.
 4. Give every route a tier; add the test that fails on a route without one.
 5. Log the reason code to the audit log and nothing more specific to the client.
-6. Try it: `mvm login`, a read, a write, a write without the role (403), and one with an expired certificate (401, `cert_expired`).
+6. Try it: `farm login`, a read, a write, a write without the role (403), and one with an expired certificate (401, `cert_expired`).

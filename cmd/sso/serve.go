@@ -10,9 +10,11 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 
+	"github.com/oxgen1/sso/internal/audit"
 	"github.com/oxgen1/sso/internal/config"
 	"github.com/oxgen1/sso/internal/idp"
 	"github.com/oxgen1/sso/lib/cert"
@@ -27,7 +29,8 @@ func serve(args []string) error {
 
 // serveUntil runs the IdP until ctx is done. The CA key is ca.key in
 // $CREDENTIALS_DIRECTORY, where systemd's LoadCredential puts it. Logs are
-// JSON for journald: audit records have "log":"audit", the rest "log":"diag".
+// JSON lines for journald: audit records have "log":"audit" and form a hash
+// chain from audit_start to audit_stop, the rest have "log":"diag".
 func serveUntil(ctx context.Context, args []string, logOut io.Writer) error {
 	if len(args) != 1 {
 		return errors.New("serve: need one FILE")
@@ -40,10 +43,15 @@ func serveUntil(ctx context.Context, args []string, logOut io.Writer) error {
 	if err != nil {
 		return err
 	}
+	logOut = &syncWriter{w: logOut}
 	log := slog.New(slog.NewJSONHandler(logOut, nil))
-	h, err := idp.New(cfg, ca, log, time.Now)
+	aud, err := audit.New(logOut, time.Now)
 	if err != nil {
 		return err
+	}
+	h, err := idp.New(cfg, ca, log, aud, time.Now)
+	if err != nil {
+		return errors.Join(err, aud.Close())
 	}
 	srv := &http.Server{
 		Addr:              cfg.Listen.String(),
@@ -57,19 +65,34 @@ func serveUntil(ctx context.Context, args []string, logOut io.Writer) error {
 	}
 	ln, err := net.Listen("tcp", srv.Addr)
 	if err != nil {
-		return err
+		return errors.Join(err, aud.Close())
 	}
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(ln) }()
 	log.Info("listening", "log", "diag", "addr", ln.Addr().String(), "rp_id", cfg.RPID, "users", len(cfg.Users))
 	select {
 	case err := <-errc:
-		return err
+		return errors.Join(err, aud.Close())
 	case <-ctx.Done():
 	}
 	shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return srv.Shutdown(shutdown)
+	// Handlers still running when Shutdown gives up may audit after the
+	// stop record; Verify then reports them as a chain without a start.
+	return errors.Join(srv.Shutdown(shutdown), aud.Close())
+}
+
+// syncWriter makes the two logs' lines whole: each is one Write, but they
+// don't share a lock.
+type syncWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (s *syncWriter) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.w.Write(p)
 }
 
 // loadCA reads the CA key from keyFile, or, when that's empty, from ca.key

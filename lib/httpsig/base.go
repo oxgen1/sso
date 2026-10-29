@@ -37,7 +37,7 @@ func signatureBase(value func(name string) (string, error), items []string, sigP
 // request (signing) and a server request (verifying).
 //
 // @authority is the Host header lowercased, with the port kept as sent: RFC
-// 9421 drops a default port, but mvm and statusd never use one, and keeping
+// 9421 drops a default port, but farm and statusd never use one, and keeping
 // it means a verifier needn't know the scheme. Header fields must appear
 // exactly once rather than being joined, as nothing in the profile repeats.
 func requestValue(r *http.Request, name string) (string, error) {
@@ -109,7 +109,7 @@ func verifyES256(pub *ecdsa.PublicKey, base, sig []byte) bool {
 }
 
 // BaseHash is what the diagnostic log records on ReasonSigMismatch, and what
-// mvm prints for the base it signed. Different hashes mean the two sides
+// farm prints for the base it signed. Different hashes mean the two sides
 // wrote the request down differently; equal ones mean the wrong key.
 func BaseHash(base []byte) string {
 	return fmt.Sprintf("%x", sha256.Sum256(base))

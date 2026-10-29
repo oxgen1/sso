@@ -25,17 +25,17 @@ Logging, rate limits and tests are part of every milestone, not a phase at the e
   - [x] `sso enroll` and its page: an HMAC link (key derived from the CA key), single use, the snippet on the page and in the audit log. RP ID `localhost` with `http://localhost:PORT` for trying it on a laptop.
 - [x] `internal/config`: users, roles, passkey keys and clients from the JSON the Nix module writes, all checked at load (each user's claims through `cert.Claims.Check`, credential IDs unique across users); CA key (PKCS #8) from `LoadCredential`. `sso ca init` and `sso config check` (for a build-time check in the module).
 - [x] `internal/webauthn`: registration (attestation `none`, ES256 only) with strict CBOR; tested against the WebAuthn L3 §16.2 vector, 30 mutation cases and a fuzzer. `lib/assertion` gained `CheckChallenge` (sign-in) and `CheckClientData` (shared with registration).
-- [ ] Audit log with a hash chain; diagnostic log; rate limits.
+- [x] Audit log with a hash chain (`internal/audit`): one chain per run from `audit_start` to `audit_stop`, `sso audit verify` for `journalctl -o cat` output. Every IdP test checks the chain it leaves. Diagnostic log and rate limits are in place.
 
-## 3. statusd and mvm
+## 3. statusd and farm
 
-- [ ] `mvm login`, `mvm req`, and `mvm verify` (replays a logged signature base).
+- [ ] `farm` in its own repo (~/Dev/farm, Go, importing only `lib`): remote status and light management for microvms and slimdeploy previews. `farm login`, `farm req`, and `farm verify` (replays a logged signature base). `mvm`, the Rust tool on the host, is unrelated and stays local.
 - [ ] statusd `internal/auth` middleware and route tiers (tracked in server-api's TODO.md).
 
 ## 4. Destructive tier
 
 - [ ] IdP approval page that shows the action and runs WebAuthn get over the signature-base hash.
-- [ ] Assertion headers from mvm and web apps; checked in statusd.
+- [ ] Assertion headers from farm and web apps; checked in statusd.
 
 ## 5. Proxy
 

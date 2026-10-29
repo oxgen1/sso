@@ -17,9 +17,11 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/oxgen1/sso/internal/audit"
 	"github.com/oxgen1/sso/internal/config"
 	"github.com/oxgen1/sso/lib/cert"
 )
@@ -112,7 +114,7 @@ type env struct {
 	srv   *Server
 	ca    *cert.CA
 	clock *clock
-	log   *bytes.Buffer
+	log   *logBuffer
 	jack  *authenticator
 	guest *authenticator
 }
@@ -133,7 +135,7 @@ func newEnv(t *testing.T) *env {
 	if err := os.WriteFile(caPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	e := &env{t: t, clock: &clock{t: now}, log: &bytes.Buffer{}, jack: newAuthenticator(t), guest: newAuthenticator(t)}
+	e := &env{t: t, clock: &clock{t: now}, log: &logBuffer{}, jack: newAuthenticator(t), guest: newAuthenticator(t)}
 	cfgJSON := `{"rpId":"` + rpID + `","origin":"` + origin + `","listenAddress":"127.0.0.1:9300",
 		"caCertificate":"` + caPath + `",
 		"users":{
@@ -152,11 +154,41 @@ func newEnv(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	e.ca.Now = e.clock.now
-	e.srv, err = New(cfg, e.ca, slog.New(slog.NewJSONHandler(e.log, nil)), e.clock.now)
+	aud, err := audit.New(e.log, e.clock.now)
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.srv, err = New(cfg, e.ca, slog.New(slog.NewJSONHandler(e.log, nil)), aud, e.clock.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Whatever a test did, the audit records it left form one chain.
+	t.Cleanup(func() {
+		rep, err := audit.Verify(strings.NewReader(e.log.String()))
+		if err != nil || len(rep.Problems) != 0 || len(rep.Chains) != 1 || !rep.Chains[0].Started {
+			t.Errorf("audit chain: %v %+v", err, rep)
+		}
+	})
 	return e
+}
+
+// logBuffer is where both logs go. Handlers run concurrently in some tests,
+// and the two logs don't share a lock.
+type logBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *logBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *logBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
 }
 
 type req struct {

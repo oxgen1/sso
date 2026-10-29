@@ -7,7 +7,7 @@ linters:
   settings:
     depguard:
       rules:
-        # lib (httpsig, cert) is imported by statusd and the mvm CLI. Keeping them
+        # lib (httpsig, cert) is imported by statusd and the farm CLI. Keeping them
         # standard-library only keeps those programs' dependency count flat.
         shared:
           files:

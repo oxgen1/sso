@@ -413,7 +413,7 @@ func TestWithHTTPSig(t *testing.T) {
 		return r, base
 	}
 
-	// mvm signs, the approval page signs the base's hash, mvm adds the header.
+	// farm signs, the approval page signs the base's hash, farm adds the header.
 	r, base := request()
 	r.Header.Set(Header, auth.response(base).sign(t).Value())
 	got, err := hv.Verify(r, nil)

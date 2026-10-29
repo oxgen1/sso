@@ -22,7 +22,7 @@ import (
 	"github.com/oxgen1/sso/internal/store"
 )
 
-// The device flow (RFC 8628) is how mvm gets a certificate: it sends a CSR
+// The device flow (RFC 8628) is how farm gets a certificate: it sends a CSR
 // for a key it made, prints a code, and polls while its user approves the
 // request in the browser with a passkey. The passkey both says who the user
 // is and approves this one request; the SSO session plays no part. The
@@ -30,7 +30,7 @@ import (
 
 const (
 	// deviceClient is the only client that uses the device flow.
-	deviceClient = "mvm"
+	deviceClient = "farm"
 	deviceGrant  = "urn:ietf:params:oauth:grant-type:device_code"
 
 	deviceTTL      = 10 * time.Minute
@@ -103,7 +103,7 @@ func formatUserCode(code string) string {
 }
 
 // keyFingerprint is SHA-256 of the SubjectPublicKeyInfo, written as OpenSSH
-// writes key fingerprints. mvm prints the same, so the two can be compared.
+// writes key fingerprints. farm prints the same, so the two can be compared.
 func keyFingerprint(key *ecdsa.PublicKey) string {
 	spki, _ := x509.MarshalPKIXPublicKey(key) // a P-256 key always marshals
 	sum := sha256.Sum256(spki)
@@ -161,7 +161,7 @@ func readForm(w http.ResponseWriter, r *http.Request) (url.Values, error) {
 	return form, nil
 }
 
-// oauthError sends an RFC 6749 §5.2 error. desc is for whoever reads mvm's
+// oauthError sends an RFC 6749 §5.2 error. desc is for whoever reads farm's
 // output.
 func oauthError(w http.ResponseWriter, status int, code, desc string) {
 	writeJSON(w, status, map[string]string{"error": code, "error_description": desc})
@@ -398,7 +398,7 @@ func (s *Server) deviceApprove(w http.ResponseWriter, r *http.Request) {
 	d, _, ok := s.devices.Get(code)
 	if !ok { // expired between the challenge and the touch
 		s.audit(r, "device_approve", "deny", "device_expired", attrs...)
-		writeError(w, http.StatusNotFound, "The request expired. Run mvm login again.")
+		writeError(w, http.StatusNotFound, "The request expired. Run farm login again.")
 		return
 	}
 	attrs = append(attrs, "device_ip", d.addr.String(), "key", d.keyFP)

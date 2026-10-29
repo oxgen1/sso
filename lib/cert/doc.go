@@ -10,5 +10,5 @@
 //
 // Only the profile Issue produces is accepted. A certificate with any other
 // algorithm, extension, name form or encoding is rejected, even when its
-// signature is good. Shared with statusd and mvm, so standard library only.
+// signature is good. Shared with statusd and farm, so standard library only.
 package cert
